@@ -126,6 +126,17 @@ export default function App() {
       api.on<{ threadId: string; state: api.ThreadState }>("thread://state", (p) =>
         store().setThreadState(p.threadId, p.state),
       ),
+      // An agent someone started in a pane. Arrives before that Thread's events,
+      // which are dropped for a Thread the UI has not been told about.
+      api.on<api.ObservedThread>("thread://observed", (thread) => store().observeThread(thread)),
+      api.on<{ title: string; body: string }>("pane://notification", (p) => {
+        // Shown in Tervin's own notice rail rather than raised as a system
+        // notification: a process asking for one is not the same as the person
+        // wanting one, and the request can arrive from a remote host.
+        store().pushNotice(
+          [p.title, p.body].filter(Boolean).join(" — ") || "A program sent a notification.",
+        );
+      }),
       api.on<unknown>("block://finished", () => {
         void store().refreshBlocks();
         void store().refreshGit();

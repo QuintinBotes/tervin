@@ -12,6 +12,35 @@ A practical guide to the part that is genuinely different from other terminals.
 | An agent Tervin has never heard of | **Settings › Agents › Add an ACP agent** | Any ACP-speaking command becomes a full structured integration. |
 | A tool with no protocol at all | **a managed pane** | Full terminal fidelity, no structured events, and the Bridge panel says so. |
 
+## Agents you start yourself
+
+You do not have to launch an agent from Tervin for Tervin to know about it. Open a
+pane, type `claude`, and a Thread appears — titled after your first prompt, showing
+the replies, tool calls and file changes, and searchable in History › Prompts
+afterwards.
+
+This works because Claude Code announces its own lifecycle over an escape sequence
+(`OSC 777;notify;warp://cli-agent`) and, when a turn ends, points at the session's
+transcript on disk. Tervin reads the sequence agents already emit and the file they
+already write. Nothing to configure, and no plugin to install.
+
+**An observed session is read-only.** Tervin has no channel to a process it did not
+spawn, so it cannot send a prompt, answer a permission request, or cancel a turn — and
+the Thread shows an explanation instead of a composer rather than a text box that
+silently does nothing. Type in the pane itself.
+
+Two consequences worth knowing:
+
+- **Tervin Rules do not gate an agent you started yourself.** The hook gate is
+  installed by Tervin when *it* launches Claude Code (see below). A session you start
+  by hand uses whatever settings you have configured, and Tervin only records what
+  happened. If you want the gate, launch from the Agents surface.
+- **Only the interactive TUI announces itself.** `claude -p 'something'` in a pane
+  produces a Block like any other command, not a Thread.
+
+Any agent that adopts the same envelope is picked up the same way; nothing in the
+handling is specific to Claude Code beyond the names it reports.
+
 ## Multiple accounts
 
 Tervin launches agents as direct child processes, so a shell alias cannot be used —

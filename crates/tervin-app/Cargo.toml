@@ -44,3 +44,10 @@ dirs = "6.0.0"
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = ["codegen"] }
+
+[dev-dependencies]
+# Real transcript files on disk: the reader follows a file the agent is writing,
+# which is not something an in-memory fixture can reproduce.
+tempfile = "3.27.0"
+# The shell hook base64-encodes the command; a Block test has to do the same.
+base64.workspace = true
