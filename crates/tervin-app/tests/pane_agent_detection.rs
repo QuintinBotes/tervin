@@ -83,6 +83,8 @@ impl Pane {
             signals,
             pending_marker: self.scanner.pending_marker(),
             mode_changes: self.scanner.mode_changes().to_vec(),
+            queries: Vec::new(),
+            color_scheme_updates: false,
             alternate_screen: false,
         })
     }
@@ -259,4 +261,98 @@ fn ordinary_shell_activity_still_produces_blocks_alongside_an_agent() {
     let block = finished.expect("a command in the same pane should still build a Block");
     assert_eq!(block.command, "cargo test");
     assert_eq!(block.exit_code, Some(0));
+}
+
+// ---------------------------------------------------------- colour scheme
+//
+// DEC mode 2031 and `CSI ? 996 n`, driven through the same scanner the pump uses. The
+// parser is unit-tested in `terminal-core`; what these check is that the pieces line up:
+// a subscription is visible on the chunk, and a query arrives with an offset a consumer
+// can cut at.
+
+#[test]
+fn a_program_asking_for_the_colour_scheme_is_seen_with_a_usable_offset() {
+    let mut pane = Pane::new();
+    // What a program actually sends on startup: subscribe, then ask.
+    let bytes = b"\x1b[?2031h\x1b[?996n";
+    pane.feed(bytes);
+
+    // The scanner is what the pump reads these from, so drive it the same way.
+    let mut scanner = OscScanner::new();
+    scanner.feed(bytes);
+
+    assert!(
+        scanner
+            .mode_changes()
+            .iter()
+            .any(|m| m.mode == terminal_core::PrivateMode::ColorSchemeUpdates && m.enabled),
+        "the subscription was not seen"
+    );
+    // One variant, so a `match` here is exhaustive rather than a filter.
+    let query = scanner
+        .queries()
+        .iter()
+        .map(|q| match q {
+            terminal_core::TerminalQuery::ColorScheme { end_offset } => *end_offset,
+        })
+        .next()
+        .expect("the query was not seen");
+    // Cutting here must land exactly at the end of the input: both sequences are
+    // control, and neither should be captured as output.
+    assert_eq!(query, bytes.len());
+}
+
+#[test]
+fn a_colour_scheme_query_leaves_the_surrounding_output_intact() {
+    // A program's own control sequences stay in the captured output, and that is
+    // deliberate: a Block holds "raw bytes with ANSI intact", and only *Tervin's* markers
+    // (OSC 133 and 7373) are cut out, because those are noise Tervin added.
+    //
+    // Stripping a program's sequences would mean rewriting its byte stream, which is the
+    // thing the OSC tap exists to avoid — that is how terminals break Neovim.
+    //
+    // So what this checks is that adding query handling did not disturb capture: the real
+    // output on either side of the sequences is still there, whole.
+    use base64::Engine as _;
+    let mut pane = Pane::new();
+    let cmd = base64::engine::general_purpose::STANDARD.encode("run-tui");
+    pane.feed(format!("\x1b]7373;cmd={cmd}\x07\x1b]133;C\x07").as_bytes());
+    pane.feed(b"hello\x1b[?2031h\x1b[?996nworld");
+    let events = pane.feed(b"\x1b]133;D;0\x07");
+
+    let block = events
+        .iter()
+        .find_map(|e| match e {
+            BlockEvent::Finished(block) => Some(block),
+            _ => None,
+        })
+        .expect("the command should have produced a Block");
+
+    let output = String::from_utf8_lossy(&block.output.inline);
+    assert!(
+        output.contains("hello"),
+        "output before the query was lost: {output:?}"
+    );
+    assert!(
+        output.contains("world"),
+        "output after the query was lost: {output:?}"
+    );
+    // Tervin's own markers are the ones that must not appear — they would otherwise show
+    // up in every copied Block and every plain-text export.
+    assert!(
+        !output.contains("7373"),
+        "a Tervin marker leaked in: {output:?}"
+    );
+    assert!(
+        !output.contains("133;"),
+        "a Tervin marker leaked in: {output:?}"
+    );
+}
+
+#[test]
+fn the_reply_bytes_are_what_a_program_parses() {
+    // The one thing a wrong constant would break, and it is invisible until a program
+    // ignores the reply. `1` is dark, `2` is light — not the other way round.
+    assert_eq!(terminal_core::ColorScheme::Dark.report(), b"\x1b[?997;1n");
+    assert_eq!(terminal_core::ColorScheme::Light.report(), b"\x1b[?997;2n");
 }
