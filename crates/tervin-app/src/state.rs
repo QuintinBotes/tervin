@@ -36,6 +36,25 @@ pub struct ThreadRuntime {
     pub runtime_id: String,
 }
 
+/// The terminal's reported light/dark state, and who wants to hear about changes.
+pub struct ColorSchemeState {
+    pub scheme: terminal_core::ColorScheme,
+    /// Panes that enabled mode 2031. A report sent to a pane that never asked would
+    /// appear as stray characters on its command line.
+    pub subscribers: std::collections::HashSet<PaneId>,
+}
+
+impl Default for ColorSchemeState {
+    fn default() -> Self {
+        Self {
+            // Dark until the UI says otherwise: every Tervin theme shipped dark by
+            // default, and guessing light would misreport for one frame at startup.
+            scheme: terminal_core::ColorScheme::Dark,
+            subscribers: std::collections::HashSet::new(),
+        }
+    }
+}
+
 /// Everything the application owns.
 pub struct AppState {
     pub terminals: Arc<TerminalRegistry>,
@@ -60,6 +79,12 @@ pub struct AppState {
     /// Agents the user started themselves in a pane, which Tervin observes but
     /// cannot drive.
     pub pane_agents: crate::pane_agents::PaneAgents,
+    /// Whether the active theme's background is dark, and which panes asked to be told
+    /// when that changes (DEC mode 2031).
+    ///
+    /// Held here because the answer comes from the UI's theme while the question arrives
+    /// on the PTY pump, and the two never meet otherwise.
+    pub color_scheme: Mutex<ColorSchemeState>,
 }
 
 impl AppState {
@@ -157,6 +182,7 @@ impl AppState {
             project_root: Mutex::new(project_root),
             startup_notices: RwLock::new(notices),
             pane_agents: crate::pane_agents::PaneAgents::new(),
+            color_scheme: Mutex::new(ColorSchemeState::default()),
         });
 
         // Build the file index off the startup path: walking a large project takes

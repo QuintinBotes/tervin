@@ -782,6 +782,15 @@ export const scrollbackSave = (
 export const scrollbackLoad = (paneKey: string, program: string | null) =>
   invoke<string | null>("scrollback_load", { paneKey, program });
 
+/**
+ * Tell the backend whether the terminal background is dark.
+ *
+ * Programs that enabled DEC mode 2031 are sent a report when this changes, and any
+ * program asking `CSI ? 996 n` is answered with it. Returns how many panes were told.
+ */
+export const colorSchemeSet = (dark: boolean) =>
+  invoke<number>("color_scheme_set", { dark });
+
 /** Forget saved history for panes the session no longer contains. */
 export const scrollbackRetain = (paneKeys: string[]) =>
   invoke<number>("scrollback_retain", { paneKeys });

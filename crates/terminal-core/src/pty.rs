@@ -8,6 +8,7 @@
 //! verbatim, and a tap extracts shell-integration signals. Both arrive in one
 //! chunk with signal offsets, so consumers can reconstruct exact ordering.
 
+use crate::osc::TerminalQuery;
 use crate::osc::{ModeChange, OscScanner, PendingMarker, PrivateMode};
 use crate::signals::{self, ShellSignal};
 use parking_lot::Mutex;
@@ -145,11 +146,44 @@ pub struct PtyChunk {
     pub pending_marker: PendingMarker,
     /// DEC private mode changes inside `bytes`, in order.
     pub mode_changes: Vec<ModeChange>,
+    /// Requests the program made that the terminal is expected to answer.
+    ///
+    /// Surfaced rather than answered in the pump, for the same reason as an OSC 52
+    /// clipboard write: replying is a decision, and the reply goes back as input to the
+    /// program — so it belongs where the rest of Tervin's writes are made.
+    pub queries: Vec<TerminalQuery>,
+    /// Whether the program asked to be told about colour-scheme changes (mode 2031).
+    ///
+    /// Carried on every chunk rather than derived from `mode_changes`, so a consumer
+    /// that starts mid-stream still knows whether this pane wants the report. Without
+    /// it, sending one to a shell that never subscribed would put stray text on the
+    /// command line.
+    pub color_scheme_updates: bool,
     /// Whether the alternate screen is active at the end of this chunk.
     ///
     /// Carried on every chunk rather than derived from `mode_changes`, so a
     /// consumer that starts mid-stream still knows the current state.
     pub alternate_screen: bool,
+}
+
+impl PtyChunk {
+    /// A chunk of plain output, with no markers, queries or mode changes.
+    ///
+    /// For tests and for callers that synthesise output. A constructor rather than
+    /// `Default`, because a chunk without a pane is not a meaningful value — and every
+    /// field added since has meant editing a dozen struct literals.
+    pub fn plain(pane_id: PaneId, bytes: Vec<u8>) -> Self {
+        Self {
+            pane_id,
+            bytes,
+            signals: Vec::new(),
+            pending_marker: PendingMarker::None,
+            mode_changes: Vec::new(),
+            queries: Vec::new(),
+            color_scheme_updates: false,
+            alternate_screen: false,
+        }
+    }
 }
 
 /// Everything a session emits.
@@ -270,10 +304,13 @@ impl PtySession {
                     let mut batch: Vec<u8> = Vec::with_capacity(FLUSH_BYTES);
                     let mut signals: Vec<PositionedSignal> = Vec::new();
                     let mut modes: Vec<ModeChange> = Vec::new();
+                    let mut queries: Vec<TerminalQuery> = Vec::new();
                     let mut pending = PendingMarker::None;
                     let mut first_byte_at: Option<Instant> = None;
                     // Screen and repaint state, tracked across the whole session.
                     let mut alternate_screen = false;
+                    // Whether this pane asked to be told about colour-scheme changes.
+                    let mut color_scheme_updates = false;
                     let mut synchronized = false;
                     let mut sync_started_at: Option<Instant> = None;
 
@@ -287,6 +324,8 @@ impl PtySession {
                                     signals: std::mem::take(&mut signals),
                                     pending_marker: pending,
                                     mode_changes: std::mem::take(&mut modes),
+                                    queries: std::mem::take(&mut queries),
+                                    color_scheme_updates,
                                     alternate_screen,
                                 }));
                                 batch.reserve(FLUSH_BYTES);
@@ -335,11 +374,27 @@ impl PtySession {
                                             synchronized = change.enabled;
                                             sync_started_at = change.enabled.then(Instant::now);
                                         }
+                                        PrivateMode::ColorSchemeUpdates => {
+                                            color_scheme_updates = change.enabled
+                                        }
                                         _ => {}
                                     }
                                     modes.push(ModeChange {
                                         end_offset: base + change.end_offset,
                                         ..*change
+                                    });
+                                }
+
+                                // Offsets are rebased onto the batch for the same reason
+                                // as the signals': a consumer cutting output at them
+                                // would otherwise capture the query's own bytes.
+                                for query in scanner.queries() {
+                                    queries.push(match *query {
+                                        TerminalQuery::ColorScheme { end_offset } => {
+                                            TerminalQuery::ColorScheme {
+                                                end_offset: base + end_offset,
+                                            }
+                                        }
                                     });
                                 }
 
@@ -382,6 +437,8 @@ impl PtySession {
                                         signals: std::mem::take(&mut signals),
                                         pending_marker: pending,
                                         mode_changes: std::mem::take(&mut modes),
+                                        queries: std::mem::take(&mut queries),
+                                        color_scheme_updates,
                                         alternate_screen,
                                     }));
                                 }

@@ -189,6 +189,10 @@ pub async fn pty_spawn(
             // Bytes to the renderer first: nothing else may delay drawing.
             let _ = on_output.send(InvokeResponseBody::Raw(chunk.bytes.clone()));
 
+            // Colour-scheme handling before the Block engine, because it is not a Block
+            // concern: it is the terminal answering a question the program asked.
+            answer_color_scheme(&sink_state, &chunk);
+
             let events = match sink_state.panes.write().get_mut(&chunk.pane_id) {
                 Some(pane) => pane.builder.consume(&chunk),
                 None => Vec::new(),
@@ -222,6 +226,69 @@ pub async fn pty_spawn(
         integration_installed: integration_active,
         integration_note,
     })
+}
+
+/// Answer a program's light/dark question, and remember whether it wants updates.
+///
+/// The reply is written back as *input* to the program, which is how terminal status
+/// reports work — so it goes through the same path as a keystroke.
+fn answer_color_scheme(state: &Arc<AppState>, chunk: &terminal_core::PtyChunk) {
+    let has_query = chunk
+        .queries
+        .iter()
+        .any(|q| matches!(q, terminal_core::TerminalQuery::ColorScheme { .. }));
+
+    let scheme = {
+        let mut cs = state.color_scheme.lock();
+        // Subscription is carried on every chunk rather than inferred from a change, so
+        // a pane that enabled the mode before Tervin started watching is still known.
+        if chunk.color_scheme_updates {
+            cs.subscribers.insert(chunk.pane_id.clone());
+        } else {
+            cs.subscribers.remove(&chunk.pane_id);
+        }
+        cs.scheme
+    };
+
+    if has_query {
+        if let Err(e) = state.terminals.write(&chunk.pane_id, scheme.report()) {
+            tracing::debug!("could not answer a colour-scheme query: {e}");
+        }
+    }
+}
+
+/// Tell every subscribed pane that the theme changed.
+///
+/// Called from the UI when the theme changes, because the UI owns the themes and the
+/// backend only learns the resulting background colour.
+#[tauri::command]
+pub fn color_scheme_set(state: State<'_, Arc<AppState>>, dark: bool) -> Result<usize> {
+    let scheme = if dark {
+        terminal_core::ColorScheme::Dark
+    } else {
+        terminal_core::ColorScheme::Light
+    };
+
+    let subscribers = {
+        let mut cs = state.color_scheme.lock();
+        // Nothing to report when it has not actually changed. Programs redraw on this,
+        // so a spurious report is a visible flicker.
+        if cs.scheme == scheme {
+            return Ok(0);
+        }
+        cs.scheme = scheme;
+        cs.subscribers.iter().cloned().collect::<Vec<_>>()
+    };
+
+    let mut told = 0;
+    for pane in subscribers {
+        // A pane that has since exited simply fails to write; that is not an error worth
+        // reporting, and the next chunk would have dropped it anyway.
+        if state.terminals.write(&pane, scheme.report()).is_ok() {
+            told += 1;
+        }
+    }
+    Ok(told)
 }
 
 /// Persist finished Blocks and forward Block activity to the UI.
