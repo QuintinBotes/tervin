@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../lib/api";
 import { describeError, useWorkspace, type ThreadView } from "../lib/store";
+import { containsPane } from "../lib/panes";
 import {
   applyEmacs,
   applyVimNormal,
@@ -32,6 +33,9 @@ export function ThreadPanel() {
   const [busy, setBusy] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
   const editMode = s.appearance.composerMode;
+  // A session someone started in a pane. Tervin observes it and cannot drive it, so
+  // there is nothing for a composer to do.
+  const observedInPane = thread?.paneId ?? null;
   const [vimMode, setVimMode] = useState<VimMode>("insert");
   // Refs rather than state: neither should cause a re-render, and both must be current
   // inside the keydown handler without rebuilding it.
@@ -257,7 +261,10 @@ export function ThreadPanel() {
         </div>
       )}
 
-      {/* Composer. */}
+      {/* Composer — replaced by an explanation when the session is not ours to drive. */}
+      {observedInPane ? (
+        <ObservedNotice paneId={observedInPane} agent={thread?.runtimeId ?? "The agent"} />
+      ) : (
       <div
         style={{
           borderTop: "1px solid var(--tervin-line)",
@@ -488,6 +495,7 @@ export function ThreadPanel() {
           </button>
         </div>
       </div>
+      )}
     </div>
   );
 }
@@ -760,4 +768,56 @@ function borderForKind(kind: string): string {
   if (kind.startsWith("command") || kind.startsWith("patch") || kind.startsWith("plan"))
     return "var(--tervin-accent)";
   return "var(--tervin-line)";
+}
+
+/**
+ * What a pane session offers instead of a composer.
+ *
+ * Tervin has no channel to a process it did not spawn: it cannot send a prompt,
+ * answer a permission request, or cancel a turn. A disabled text box would be worse
+ * than none — it reads as "not working yet" rather than "type it in the pane".
+ *
+ * So this says plainly what Tervin is doing, what it is not, and where to type.
+ */
+function ObservedNotice({ paneId, agent }: { paneId: string; agent: string }) {
+  const s = useWorkspace();
+  // Panes live in a split tree per tab, so finding the owner means walking it.
+  const tab = s.tabs.find((t) => t.root && containsPane(t.root, paneId));
+
+  return (
+    <div
+      style={{
+        borderTop: "1px solid var(--tervin-line)",
+        padding: "var(--sp-3)",
+        flex: "none",
+        background: "var(--tervin-panel)",
+      }}
+    >
+      <div className="row" style={{ gap: "var(--sp-2)", alignItems: "baseline" }}>
+        <span className="chip" title="Tervin did not start this session">
+          in a pane
+        </span>
+        <span className="meta grow" style={{ textWrap: "pretty" }}>
+          {agent} is running in a terminal pane. Tervin is recording what happens —
+          prompts, replies and file changes are searchable — but it cannot send a
+          prompt or answer a permission request for a session it did not start. Type
+          in the pane itself.
+        </span>
+      </div>
+      {tab && (
+        <div className="row" style={{ marginTop: "var(--sp-2)", gap: "var(--sp-2)" }}>
+          <button
+            className="btn btn-xs"
+            onClick={() => {
+              s.setActiveTab(tab.id);
+              s.setActivePane(paneId);
+              s.setSurface("terminal");
+            }}
+          >
+            Show the pane
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }

@@ -85,6 +85,17 @@ Tervin also **never answers `allow`** through a hook — only `deny` or `defer`.
 would skip the runtime's *own* checks, and a safety feature that quietly disables
 another safety feature is not one.
 
+## Agents you start yourself
+
+Open a pane, type `claude`, and it becomes a Thread — titled after your prompt, with
+the replies, tool calls and file changes recorded, and searchable afterwards. Tervin
+reads the escape sequence Claude Code already emits and the transcript it already
+writes, so there is nothing to install and nothing to configure.
+
+Such a session is read-only: Tervin cannot send a prompt or answer a permission
+request for a process it did not spawn, and says so rather than showing a composer
+that does nothing. Launch from the Agents surface if you want Tervin Rules to gate it.
+
 ## Context handoff
 
 Because every Thread is the same event stream, work can move between agents. A

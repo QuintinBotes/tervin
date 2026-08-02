@@ -8,6 +8,7 @@ description = "PTY sessions, OSC escape-sequence tap, and shell-integration sign
 [dependencies]
 tervin-core.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 tracing.workspace = true

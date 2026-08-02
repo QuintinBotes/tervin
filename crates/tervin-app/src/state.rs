@@ -57,6 +57,9 @@ pub struct AppState {
     pub project_root: Mutex<PathBuf>,
     /// Warnings raised during startup, surfaced once in the UI.
     pub startup_notices: RwLock<Vec<String>>,
+    /// Agents the user started themselves in a pane, which Tervin observes but
+    /// cannot drive.
+    pub pane_agents: crate::pane_agents::PaneAgents,
 }
 
 impl AppState {
@@ -147,6 +150,7 @@ impl AppState {
             spill_dir,
             project_root: Mutex::new(project_root),
             startup_notices: RwLock::new(notices),
+            pane_agents: crate::pane_agents::PaneAgents::new(),
         });
 
         // Build the file index off the startup path: walking a large project takes

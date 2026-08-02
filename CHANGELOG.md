@@ -5,6 +5,36 @@ log says what changed, and this is for what it means to someone using it.
 
 ## Unreleased
 
+### Agents you start yourself are now part of the workspace
+
+- **Open a pane, type `claude`, and it becomes a Thread.** Titled after your first
+  prompt, with the replies, tool calls and file changes on the timeline, and searchable
+  in prompt history afterwards. Nothing to install and nothing to configure.
+- It works by reading `OSC 777;notify;warp://cli-agent`, which Claude Code already
+  emits, and then the transcript it already writes — the sequence and its fields were
+  captured from a real PTY rather than taken from documentation. Verified that it is
+  *not* gated on `TERM_PROGRAM`, so Tervin setting its own does not suppress it.
+- **An observed session is read-only, and says so.** Tervin has no channel to a process
+  it did not spawn, so the Thread shows an explanation instead of a composer rather than
+  a text box that silently does nothing.
+- Only the interactive TUI announces itself; `claude -p` in a pane is a Block like any
+  other command. And Tervin Rules do not gate a session you started by hand — that gate
+  is installed when Tervin launches the agent.
+- Any agent adopting the same envelope is picked up the same way.
+- A desktop notification requested over OSC 777 is surfaced in Tervin's notice rail
+  rather than raised as a system notification: a process asking for one is not the same
+  as the person wanting one, and the request can come from a remote host.
+
+### Every component is reachable, and tested where it mounts
+
+- A static test now fails the build if a component is imported nowhere. It caught
+  `GitPanel` and `ConnectionsPanel` — both complete, both unreachable, both the same
+  shape as the crash that shipped in History. `GitPanel` now sits beside the diff in
+  Review; `ConnectionsPanel` opens on `⌘⇧O`.
+- Surfaces are mounted in tests against the data that actually breaks rendering: null
+  exit codes, a mid-rebase detached HEAD, an unusable SSH pattern, control characters,
+  a command long enough to be a paste accident.
+
 ### The permission gates became real
 
 - **Claude Code now has a genuine pre-execution gate**, through a `PreToolUse` hook that
