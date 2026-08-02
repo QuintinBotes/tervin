@@ -332,9 +332,15 @@ impl Normalizer {
             .filter(|s| !s.is_empty())
             .map(String::from);
 
-        // Tervin's gate identifies itself by the flag in its own command line, which
-        // the runtime echoes back in the hook's error text.
-        let is_tervin = value.to_string().contains(crate::claude::hooks::HOOK_FLAG);
+        // Tervin's gate identifies itself two ways, and it needs both. The runtime
+        // echoes the hook's command line back only when the hook *blocked*; a hook that
+        // merely failed carries nothing but its own stderr. Matching on the command line
+        // alone therefore recognised the gate exactly when it worked and missed it every
+        // time it broke — so Tervin reported its own failures as the user's hooks.
+        let is_tervin = value.to_string().contains(crate::claude::hooks::HOOK_FLAG)
+            || stderr
+                .as_deref()
+                .is_some_and(|s| s.contains(crate::claude::hooks::HOOK_STDERR_PREFIX));
 
         self.hook_runs.push(crate::runtime::HookRun {
             name: name.clone(),
@@ -1827,6 +1833,65 @@ mod tests {
         assert_eq!(n.hook_runs.len(), 1);
         assert!(n.hook_runs[0].is_tervin);
         assert!(n.denials.is_empty(), "the gate records its own denials");
+    }
+
+    #[test]
+    fn a_gate_that_failed_is_still_recognised_as_tervins_own() {
+        // The case that was wrong. When the gate blocks, the runtime echoes its command
+        // line back and the flag is there to find. When the gate merely fails there is
+        // no command line — only the hook's own stderr — so matching on the flag alone
+        // recognised the gate exactly when it worked and missed it every time it broke.
+        // Tervin then showed its own dead socket as a hook the user had configured.
+        let mut n = normalizer();
+        let events = n.ingest(&serde_json::json!({
+            "type": "system", "subtype": "hook_response",
+            "hook_name": "PreToolUse:Bash", "hook_event": "PreToolUse",
+            "stderr": "Tervin hook: Tervin did not answer within 5s.",
+            "exit_code": 1, "outcome": "error"
+        }));
+
+        assert!(
+            events.is_empty(),
+            "Tervin's own failure is not a diagnostic about the user's setup: {events:?}"
+        );
+        assert_eq!(n.hook_runs.len(), 1);
+        assert!(
+            n.hook_runs[0].is_tervin,
+            "a gate failure carries no command line, so the stderr prefix has to carry it"
+        );
+    }
+
+    #[test]
+    fn the_hook_client_and_the_normalizer_agree_on_the_prefix() {
+        // The two ends drifting apart is what caused the misattribution, and nothing
+        // else would catch it: each side compiles perfectly well on its own.
+        let mut n = normalizer();
+        n.ingest(&serde_json::json!({
+            "type": "system", "subtype": "hook_response",
+            "hook_name": "PreToolUse:Bash", "hook_event": "PreToolUse",
+            "stderr": format!(
+                "{}could not reach Tervin at /run/h.sock (No such file or directory). \
+                 This tool call was NOT checked against Tervin Rules.",
+                crate::claude::hooks::HOOK_STDERR_PREFIX
+            ),
+            "exit_code": 1, "outcome": "error"
+        }));
+        assert!(n.hook_runs[0].is_tervin);
+    }
+
+    #[test]
+    fn a_user_hook_that_fails_is_still_reported_as_theirs() {
+        // The other half of the fix: widening the match must not swallow the user's own
+        // broken hooks, which are the reason the diagnostic exists at all.
+        let mut n = normalizer();
+        let events = n.ingest(&serde_json::json!({
+            "type": "system", "subtype": "hook_response",
+            "hook_name": "PreToolUse:Bash", "hook_event": "PreToolUse",
+            "stderr": "my-gate.sh: line 3: jq: command not found",
+            "exit_code": 127, "outcome": "error"
+        }));
+        assert!(!n.hook_runs[0].is_tervin);
+        assert!(events.iter().any(|e| e.kind() == "diagnostic.detected"));
     }
 
     #[test]

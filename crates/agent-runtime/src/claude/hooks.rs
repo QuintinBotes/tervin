@@ -460,7 +460,7 @@ pub fn run_hook_client(socket: &Path) -> i32 {
     if std::io::stdin().read_to_string(&mut input).is_err() {
         // Nothing to decide about. Exiting 1 is a non-blocking error, which leaves
         // the runtime's own flow intact rather than blocking a call Tervin never saw.
-        eprintln!("Tervin hook: could not read the tool call from stdin.");
+        eprintln!("{HOOK_STDERR_PREFIX}could not read the tool call from stdin.");
         return 1;
     }
 
@@ -470,8 +470,8 @@ pub fn run_hook_client(socket: &Path) -> i32 {
             // Tervin is gone. Say so loudly rather than failing silently: the user
             // believes actions are being gated, and right now they are not.
             eprintln!(
-                "Tervin hook: could not reach Tervin at {} ({e}). This tool call was \
-                 NOT checked against Tervin Rules.",
+                "{HOOK_STDERR_PREFIX}could not reach Tervin at {} ({e}). This tool call \
+                 was NOT checked against Tervin Rules.",
                 socket.display()
             );
             return 1;
@@ -485,7 +485,7 @@ pub fn run_hook_client(socket: &Path) -> i32 {
     let mut payload = input.trim().replace('\n', " ");
     payload.push('\n');
     if stream.write_all(payload.as_bytes()).is_err() || stream.flush().is_err() {
-        eprintln!("Tervin hook: could not send the tool call to Tervin.");
+        eprintln!("{HOOK_STDERR_PREFIX}could not send the tool call to Tervin.");
         return 1;
     }
 
@@ -494,12 +494,12 @@ pub fn run_hook_client(socket: &Path) -> i32 {
         .is_err()
         || response.trim().is_empty()
     {
-        eprintln!("Tervin hook: Tervin did not answer within {HOOK_TIMEOUT_SECS}s.");
+        eprintln!("{HOOK_STDERR_PREFIX}Tervin did not answer within {HOOK_TIMEOUT_SECS}s.");
         return 1;
     }
 
     let Ok(value) = serde_json::from_str::<Value>(response.trim()) else {
-        eprintln!("Tervin hook: Tervin's answer could not be read.");
+        eprintln!("{HOOK_STDERR_PREFIX}Tervin's answer could not be read.");
         return 1;
     };
 
@@ -524,6 +524,18 @@ pub fn run_hook_client(socket: &Path) -> i32 {
 
 /// The flag that turns Tervin's own executable into the hook.
 pub const HOOK_FLAG: &str = "--tervin-hook";
+
+/// The prefix every message the hook client prints to stderr carries.
+///
+/// This is how the normalizer recognises the gate's own failures. The runtime echoes
+/// the hook's command line back only when the hook *blocked*; a hook that merely
+/// failed carries nothing but its own stderr, so without a marker of its own every
+/// gate failure was reported as the user's configuration.
+///
+/// It is deliberately the same string a reader sees, rather than a hidden token: the
+/// text is already user-facing, and a sentinel nobody can read is one nobody
+/// maintains. Denials are exempt — their stderr is fed back to the agent verbatim.
+pub const HOOK_STDERR_PREFIX: &str = "Tervin hook: ";
 
 /// Recognise a hook invocation before any UI starts.
 ///
