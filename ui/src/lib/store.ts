@@ -256,6 +256,15 @@ export interface ThreadView {
   capabilities: api.Capabilities | null;
   permissions: api.PermissionState | null;
   info: api.ThreadInfo | null;
+  /**
+   * The pane this Thread is being observed in, for a session the user started
+   * themselves rather than one Tervin launched.
+   *
+   * Present means read-only: Tervin has no channel to a process it did not spawn, so
+   * it cannot send a prompt, answer a permission request, or cancel a turn. The
+   * composer is hidden rather than shown and silently doing nothing.
+   */
+  paneId?: string | null;
 }
 
 interface WorkspaceActions {
@@ -300,6 +309,14 @@ interface WorkspaceActions {
 
   upsertThread: (thread: ThreadView) => void;
   appendThreadEvent: (event: api.TervinEvent) => void;
+  /**
+   * Register a Thread for an agent running in a pane.
+   *
+   * Its events arrive on the same channel as any other Thread's, and
+   * `appendThreadEvent` drops events for a Thread it has never heard of — so this has
+   * to land first, which the backend guarantees by emitting it before the events.
+   */
+  observeThread: (thread: api.ObservedThread) => void;
   setThreadState: (threadId: string, state: api.ThreadState) => void;
   setActiveThread: (threadId: string | null) => void;
   /**
@@ -672,6 +689,33 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
       activeThreadId: s.activeThreadId ?? thread.id,
     })),
 
+  observeThread: (thread) =>
+    set((s) => {
+      const existing = s.threads[thread.id];
+      return {
+        threads: {
+          ...s.threads,
+          [thread.id]: {
+            id: thread.id,
+            profileId: existing?.profileId ?? "",
+            runtimeId: thread.agent.runtime_id,
+            title: thread.task_title,
+            state: thread.state,
+            events: existing?.events ?? [],
+            // Null on purpose: there is no session to ask, and inventing them would
+            // put controls on screen that cannot work.
+            capabilities: null,
+            permissions: null,
+            info: existing?.info ?? null,
+            paneId: thread.pane_id,
+          },
+        },
+        // Not selected automatically. An agent starting in a pane must not yank the
+        // surface out from under someone mid-task.
+        activeThreadId: s.activeThreadId,
+      };
+    }),
+
   appendThreadEvent: (event) =>
     set((s) => {
       if (!event.thread_id) return {};
@@ -729,6 +773,14 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
           capabilities: existing?.capabilities ?? null,
           permissions: existing?.permissions ?? null,
           info: existing?.info ?? null,
+          // Recorded on the thread.started event, so a session reached from prompt
+          // history long after it ended is still known to be a pane session — and
+          // still does not get a composer.
+          paneId:
+            existing?.paneId ??
+            (started?.links.find((l) => "pane_id" in l) as { pane_id?: string } | undefined)
+              ?.pane_id ??
+            null,
         },
       },
     }));

@@ -32,6 +32,7 @@
 
 pub mod hooks;
 pub mod normalize;
+pub mod transcript;
 
 use crate::runtime::{
     AgentRuntime, AgentSession, ArbiterDecision, Attachment, Discovery, LaunchConfig,
