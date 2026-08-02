@@ -1,0 +1,83 @@
+name: Bug report
+description: Something behaves differently than it says it does
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two details separate most Tervin bugs from each other, and both are asked for
+        below. Without them a report usually needs a round trip before anyone can start.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what happened, and what you expected instead.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Tervin version
+      description: "Settings › About, or `npx tervin --where` shows the cached version."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it was installed
+      description: This decides whether macOS quarantined the app, which changes several behaviours.
+      options:
+        - npx tervin
+        - brew install --formula (built from source)
+        - brew install --cask (prebuilt)
+        - .dmg from GitHub Releases
+        - built from source myself
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: macOS version and chip
+      placeholder: "macOS 26.1, Apple M3"
+    validations:
+      required: true
+
+  - type: input
+    id: shell
+    attributes:
+      label: Shell
+      placeholder: "zsh 5.9 with oh-my-zsh and powerlevel10k"
+
+  - type: dropdown
+    id: integration
+    attributes:
+      label: Was shell integration active?
+      description: The status rail shows a Block count when it is. Blocks, cwd tracking, and command capture all depend on it.
+      options:
+        - "Yes — Blocks were being captured"
+        - "No — the Block count stayed at 0"
+        - "Not sure"
+        - "Not relevant to this bug"
+
+  - type: textarea
+    id: agent
+    attributes:
+      label: If an agent was involved
+      description: |
+        Which runtime, and **what the permission line said** — "Tervin Rules gate this
+        Thread", "installed but not consulted yet", or "Provider-native approvals".
+        Those three states fail in ways that look identical from outside, and that line
+        is what tells them apart.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Run from a terminal to capture them:
+        `TERVIN_LOG=debug /Applications/Tervin.app/Contents/MacOS/tervin`
+      render: text

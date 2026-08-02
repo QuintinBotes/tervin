@@ -1,0 +1,1380 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin:0; padding:0; background:#141514; }
+  * { box-sizing:border-box; }
+  a { color:#68AEA5; text-decoration:none; }
+  a:hover { color:#8CC9C1; }
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb { background:#323634; border-radius:6px; border:3px solid #141514; }
+  ::-webkit-scrollbar-track { background:transparent; }
+</style>
+</helmet>
+
+<div style="height:100vh;display:flex;flex-direction:column;background:#141514;color:#E5E8E5;font-family:Geist,Inter,system-ui,sans-serif;font-size:13px;overflow:hidden;position:relative">
+
+  <div style="height:42px;flex:0 0 42px;display:flex;align-items:center;gap:12px;padding:0 10px 0 12px;border-bottom:1px solid #232624">
+    <svg width="16" height="16" viewBox="0 0 128 128" aria-label="Tervin" style="flex:0 0 16px"><rect width="128" height="128" rx="24" fill="#1B1D1C"></rect><path d="M39 22h20v84H39l11-42z" fill="#E5E8E5"></path><path d="M89 22H69v84h20L78 64z" fill="#AEB5B1"></path><path d="M61 22h6v84h-6z" fill="#68AEA5"></path><path d="M61 56h6v16h-6z" fill="#8CC9C1"></path></svg>
+
+    <button onClick="{{ openPalette }}" style="display:flex;align-items:center;gap:8px;height:26px;padding:0 9px;background:transparent;border:1px solid #232624;border-radius:5px;color:#E5E8E5;font:inherit;font-size:12px;cursor:pointer;white-space:nowrap;flex:0 1 auto;min-width:0;overflow:hidden" style-hover="border-color:#323634">
+      ledger-api
+      <span style="color:#5d635f">/</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#AEB5B1;min-width:0;overflow:hidden;text-overflow:ellipsis">fix/token-refresh</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#D5AB68">●3</span>
+    </button>
+
+    <div style="display:flex;align-items:stretch;height:26px;gap:2px;flex:0 0 auto">
+      <sc-for list="{{ surfaces }}" as="s" hint-placeholder-count="3">
+        <button onClick="{{ s.go }}" style="{{ s.style }}">
+          {{ s.label }}
+          <span style="{{ s.badgeStyle }}">{{ s.badge }}</span>
+        </button>
+      </sc-for>
+    </div>
+
+    <div style="flex:1"></div>
+
+    <button onClick="{{ openApproval }}" style="{{ waitingStyle }}">1 agent waiting on you</button>
+    <div style="position:relative;flex:0 0 auto">
+      <button onClick="{{ toggleProfileMenu }}" style="display:flex;align-items:center;gap:7px;height:26px;padding:0 9px;background:transparent;border:1px solid #232624;border-radius:5px;color:#E5E8E5;font-family:'JetBrains Mono',monospace;font-size:11.5px;cursor:pointer;white-space:nowrap" style-hover="border-color:#323634">
+        <span style="width:6px;height:6px;border-radius:50%;background:#68AEA5;flex:0 0 6px"></span>{{ activeProfileName }}<span style="color:#5d635f">▾</span>
+      </button>
+      <sc-if value="{{ profileMenuOpen }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;top:32px;right:0;width:326px;background:#171918;border:1px solid #323634;border-radius:7px;box-shadow:0 18px 44px rgba(0,0,0,0.5);z-index:70;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #232624;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#909894">
+            Agent profile<span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:none;letter-spacing:0">⌘⇧P</span>
+          </div>
+          <sc-for list="{{ profiles }}" as="p" hint-placeholder-count="4">
+            <button onClick="{{ p.go }}" style="{{ p.style }}" style-hover="background:#1B1D1C">
+              <span style="{{ p.dot }}"></span>
+              <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.cmd }}</span>
+                <span style="font-size:11px;color:#909894;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.detail }}</span>
+              </div>
+              <span style="{{ p.checkStyle }}">✓</span>
+            </button>
+          </sc-for>
+          <div style="padding:8px 12px;border-top:1px solid #232624;display:flex;align-items:center;gap:8px;font-size:11.5px;color:#909894;min-width:0">
+            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">New panes launch with this profile</span>
+            <button onClick="{{ openSettings }}" style="flex:0 0 auto;white-space:nowrap;background:transparent;border:none;color:#68AEA5;font:inherit;font-size:11.5px;cursor:pointer">Add profile…</button>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+    <button onClick="{{ openPalette }}" style="{{ barBtnStyle }}" style-hover="border-color:#323634">Search <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px">⌘K</span></button>
+    <button onClick="{{ openBridge }}" style="{{ barBtnStyle }}" style-hover="border-color:#323634">Bridge</button>
+    <button onClick="{{ openSettings }}" style="{{ settingsBtnStyle2 }}" style-hover="border-color:#323634">Settings</button>
+    <div style="position:relative;flex:0 0 auto">
+      <button onClick="{{ toggleMore }}" title="More" style="{{ moreBtnStyle }}" style-hover="border-color:#323634">⋯</button>
+      <sc-if value="{{ moreOpen }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;top:32px;right:0;width:180px;background:#171918;border:1px solid #323634;border-radius:7px;box-shadow:0 18px 44px rgba(0,0,0,0.5);z-index:70;overflow:hidden">
+          <sc-for list="{{ moreItems }}" as="m" hint-placeholder-count="3">
+            <button onClick="{{ m.go }}" style="{{ m.style }}" style-hover="background:#1B1D1C">{{ m.label }}</button>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <div style="flex:1;display:flex;min-height:0;position:relative">
+
+    <sc-if value="{{ isTerminal }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:1;display:flex;min-width:0;position:relative">
+        <sc-for list="{{ termPanes }}" as="p" hint-placeholder-count="1">
+          <div style="{{ p.wrapStyle }}">
+            <div onMouseDown="{{ p.onResize }}" style="{{ p.handleStyle }}" style-hover="background:#68AEA5"></div>
+            <div style="flex:1;display:flex;flex-direction:column;min-width:0">
+              <div onDragOver="{{ p.allowDrop }}" onDrop="{{ p.onDropStrip }}" style="height:29px;flex:0 0 29px;display:flex;align-items:stretch;border-bottom:1px solid #1B1D1C;overflow-x:auto">
+                <sc-for list="{{ p.tabs }}" as="t" hint-placeholder-count="3">
+                  <button onClick="{{ t.go }}" draggable="{{ true }}" onDragStart="{{ t.onDragStart }}" onDragEnd="{{ t.onDragEnd }}" onDragOver="{{ p.allowDrop }}" onDrop="{{ t.onDrop }}" style="{{ t.style }}">
+                    <span style="{{ t.dot }}"></span>
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.label }}</span>
+                    <span onClick="{{ t.onClose }}" style="{{ t.closeStyle }}">×</span>
+                  </button>
+                </sc-for>
+                <button onClick="{{ p.onAdd }}" title="New tab" style="width:26px;flex:0 0 26px;background:transparent;border:none;color:#5d635f;cursor:pointer;font-size:14px">+</button>
+                <button onClick="{{ p.onClosePane }}" title="Close pane" style="{{ p.closePaneStyle }}">⤫</button>
+              </div>
+              <sc-if value="{{ p.isText }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:1;overflow:auto;padding:9px 15px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.6;color:#AEB5B1;white-space:pre-wrap">{{ p.body }}</div>
+              </sc-if>
+              <sc-if value="{{ p.isBlocks }}" hint-placeholder-val="{{ true }}">
+                <div style="flex:1;overflow:auto;padding:4px 0 40px">
+          <sc-for list="{{ blocks }}" as="b" hint-placeholder-count="4">
+            <div style="padding:9px 18px 11px 15px;border-left:2px solid transparent" style-hover="background:#181A19;border-left-color:#232624">
+              <div style="display:flex;align-items:baseline;gap:9px;min-width:0">
+                <span style="{{ b.mark }}"></span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:12.5px;color:#E5E8E5;flex:1;min-width:0;white-space:pre-wrap;word-break:break-word">{{ b.cmd }}</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#5d635f;font-variant-numeric:tabular-nums;white-space:nowrap;flex:0 0 auto">{{ b.meta }}</span>
+              </div>
+              <div style="margin-top:5px;padding-left:16px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.55;color:#AEB5B1;white-space:pre-wrap">{{ b.out }}</div>
+              <div style="{{ b.plainStyle }}">{{ b.plain }}</div>
+            </div>
+          </sc-for>
+                  <div style="display:flex;align-items:baseline;gap:9px;padding:10px 15px">
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:12.5px;color:#68AEA5">❯</span>
+                    <span style="width:8px;height:15px;background:#68AEA5;display:inline-block"></span>
+                  </div>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </sc-for>
+        <div onDragOver="{{ allowDrop }}" onDrop="{{ onDropSplit }}" style="{{ dropSplitStyle }}">Drop to split</div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isPlan }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;display:flex;min-width:0">
+        <div style="flex:1 1 520px;min-width:0;display:flex;flex-direction:column;border-right:1px solid #1B1D1C">
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #1B1D1C;min-width:0">
+            <span style="font-size:13px;font-weight:600;white-space:nowrap">Fix the expired-grant path</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#5d635f;white-space:nowrap">{{ planRevLabel }}</span>
+            <span style="flex:1"></span>
+            <span style="{{ modeChipStyle }}">{{ modeLabel }}</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5d635f;white-space:nowrap">⇧⇥</span>
+          </div>
+
+          <div style="display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px;border-bottom:1px solid #1B1D1C">
+            <sc-for list="{{ modeOpts }}" as="m" hint-placeholder-count="4">
+              <button onClick="{{ m.go }}" style="{{ m.style }}">
+                <span style="font-size:12px;white-space:nowrap">{{ m.label }}</span>
+                <span style="{{ m.hintStyle }}">{{ m.hint }}</span>
+              </button>
+            </sc-for>
+          </div>
+
+          <div style="flex:1;overflow:auto">
+            <sc-for list="{{ planSteps }}" as="p" hint-placeholder-count="5">
+              <div onClick="{{ p.go }}" draggable="{{ true }}" onDragStart="{{ p.onDragStart }}" onDragEnd="{{ p.onDragEnd }}" onDragOver="{{ p.allowDrop }}" onDrop="{{ p.onDrop }}" style="{{ p.style }}">
+                <span style="{{ p.numStyle }}">{{ p.num }}</span>
+                <span style="{{ p.dotStyle }}"></span>
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:5px">
+                  <input value="{{ p.title }}" onChange="{{ p.onText }}" style="{{ p.inputStyle }}" />
+                  <div style="display:flex;flex-wrap:wrap;gap:5px">
+                    <sc-for list="{{ p.targets }}" as="tg" hint-placeholder-count="2">
+                      <span style="{{ p.targetStyle }}">{{ tg }}</span>
+                    </sc-for>
+                  </div>
+                </div>
+                <button onClick="{{ p.onSkip }}" style="{{ p.skipStyle }}">{{ p.skipLabel }}</button>
+              </div>
+            </sc-for>
+            <button onClick="{{ addStep }}" style="display:flex;align-items:center;gap:8px;width:100%;padding:10px 12px;background:transparent;border:none;color:#5d635f;font:inherit;font-size:12px;cursor:pointer;text-align:left" style-hover="color:#68AEA5">+ Add a step — drag any step to reorder</button>
+          </div>
+
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 16px;border-top:1px solid #232624">
+            <button style="flex:0 0 auto;white-space:nowrap;height:28px;padding:0 13px;border:none;border-radius:5px;background:#68AEA5;color:#141514;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="background:#8CC9C1">Approve and run</button>
+            <button onClick="{{ sendPlanEdits }}" style="{{ planEditStyle }}" style-hover="background:#232624">{{ planEditLabel }}</button>
+            <button style="flex:0 0 auto;white-space:nowrap;height:28px;padding:0 11px;border:1px solid #323634;border-radius:5px;background:transparent;color:#AEB5B1;font:inherit;font-size:12.5px;cursor:pointer" style-hover="background:#232624">Save as workflow</button>
+            <span style="margin-left:auto;font-size:11.5px;color:#5d635f;white-space:nowrap">{{ planActive }}</span>
+          </div>
+        </div>
+
+        <sc-if value="{{ wide }}" hint-placeholder-val="{{ true }}">
+          <div style="flex:1 1 400px;min-width:0;display:flex;flex-direction:column">
+            <div style="display:flex;align-items:center;gap:9px;padding:10px 16px;border-bottom:1px solid #1B1D1C;min-width:0">
+              <span style="flex:1;min-width:0;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ selTitle }}</span>
+              <span style="{{ selStateStyle }}">{{ selState }}</span>
+            </div>
+            <div style="padding:12px 16px;border-bottom:1px solid #1B1D1C;font-size:12.5px;color:#AEB5B1;line-height:1.55;text-wrap:pretty">{{ selDetail }}</div>
+            <div style="flex:1;overflow:auto;padding:12px 16px;font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:1.65">
+              <sc-for list="{{ diff }}" as="l" hint-placeholder-count="8">
+                <div style="{{ l.style }}"><span style="display:inline-block;width:20px;color:#5d635f;text-align:center">{{ l.sign }}</span>{{ l.s }}</div>
+              </sc-for>
+            </div>
+            <div style="border-top:1px solid #232624;padding:11px 16px;display:flex;flex-direction:column;gap:9px">
+              <div style="border:1px solid #323634;border-radius:6px;background:#141514;padding:9px 11px;min-height:52px;font-size:12.5px;color:#5d635f;text-wrap:pretty">Ask for a change to this step — “use a 30s clock skew instead”</div>
+              <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+                <button style="flex:0 0 auto;white-space:nowrap;height:24px;padding:0 10px;border:1px solid #323634;border-radius:5px;background:transparent;color:#AEB5B1;font:inherit;font-size:11.5px;cursor:pointer" style-hover="background:#232624">Run this step only</button>
+                <button style="flex:0 0 auto;white-space:nowrap;height:24px;padding:0 10px;border:1px solid #323634;border-radius:5px;background:transparent;color:#AEB5B1;font:inherit;font-size:11.5px;cursor:pointer" style-hover="background:#232624">Open in editor</button>
+                <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5d635f;white-space:nowrap">⌘↵</span>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isAgents }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;display:flex;min-width:0">
+        <div style="{{ agentsLeftStyle }}">
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 15px;border-bottom:1px solid #1B1D1C">
+            <span style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#909894">Threads</span>
+            <span style="font-size:11.5px;color:#5d635f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Waiting first · then running · then done</span>
+          </div>
+          <div style="flex:1;overflow:auto">
+            <sc-for list="{{ threads }}" as="t" hint-placeholder-count="4">
+              <button onClick="{{ t.go }}" style="{{ t.style }}">
+                <span style="{{ t.dot }}"></span>
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;text-align:left">
+                  <span style="font-size:12.5px;color:#E5E8E5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.task }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#909894;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.meta }}</span>
+                </div>
+                <span style="{{ t.stateStyle }}">{{ t.state }}</span>
+              </button>
+            </sc-for>
+          </div>
+        </div>
+
+        <sc-if value="{{ wide }}" hint-placeholder-val="{{ true }}">
+          <div onMouseDown="{{ onAgentsResize }}" style="{{ agentsHandleStyle }}" style-hover="background:#68AEA5"></div>
+          <div style="flex:1 1 420px;min-width:0;display:flex;flex-direction:column">
+            <div style="display:flex;align-items:center;gap:8px;padding:9px 15px;border-bottom:1px solid #1B1D1C;min-width:0">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#909894;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">{{ selected.title }}</span>
+              <button onClick="{{ openApproval }}" style="{{ selected.actionStyle }}">{{ selected.action }}</button>
+            </div>
+            <div style="flex:1;overflow:auto;padding:10px 15px;font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:1.65;color:#AEB5B1;white-space:pre-wrap">{{ selected.body }}</div>
+            <div style="flex:0 0 auto;max-height:180px;overflow:auto;border-top:1px solid #232624;padding:8px 0">
+              <sc-for list="{{ timeline }}" as="e" hint-placeholder-count="6">
+                <div style="display:flex;gap:10px;padding:4px 15px;min-width:0">
+                  <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5d635f;flex:0 0 46px;font-variant-numeric:tabular-nums">{{ e.t }}</span>
+                  <span style="{{ e.tagStyle }}">{{ e.tag }}</span>
+                  <span style="flex:1;min-width:0;font-size:12px;color:#AEB5B1;text-wrap:pretty">{{ e.text }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="flex:0 0 auto;border-top:1px solid #232624;padding:9px 15px;display:flex;align-items:center;gap:9px">
+              <span style="flex:1;min-width:0;font-size:12.5px;color:#5d635f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Message the agent, /plan, @path…</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5d635f;white-space:nowrap">42.1k ctx · $0.38 · ⌘↵</span>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isReview }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;display:flex;min-width:0">
+        <sc-if value="{{ wide }}" hint-placeholder-val="{{ true }}">
+          <div style="{{ reviewLeftStyle }}">
+            <div style="display:flex;gap:2px;padding:7px 10px;border-bottom:1px solid #1B1D1C">
+              <sc-for list="{{ leftTabs }}" as="t" hint-placeholder-count="2">
+                <button onClick="{{ t.go }}" style="{{ t.style }}">{{ t.label }}</button>
+              </sc-for>
+            </div>
+            <div style="flex:1;overflow:auto;padding:4px 0">
+              <sc-for list="{{ leftList }}" as="f" hint-placeholder-count="6">
+                <div style="{{ f.style }}">
+                  <span style="{{ f.markStyle }}">{{ f.mark }}</span>
+                  <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ f.name }}</span>
+                  <span style="{{ f.tailStyle }}">{{ f.tail }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="border-top:1px solid #1B1D1C;padding:9px 12px;font-size:11.5px;color:#909894;line-height:1.5;text-wrap:pretty">Uncommitted. Authored by Claude Code in thread 3f2a.</div>
+          </div>
+          <div onMouseDown="{{ onReviewLeftResize }}" style="{{ reviewLeftHandleStyle }}" style-hover="background:#68AEA5"></div>
+        </sc-if>
+
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:9px;padding:8px 14px;border-bottom:1px solid #1B1D1C;min-width:0">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#AEB5B1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">crates/auth/src/token.rs <span style="color:#85BC7E">+18</span> <span style="color:#D77D79">−6</span></span>
+            <button style="flex:0 0 auto;white-space:nowrap;height:24px;padding:0 10px;border:none;border-radius:5px;background:#68AEA5;color:#141514;font:inherit;font-size:11.5px;font-weight:600;cursor:pointer" style-hover="background:#8CC9C1">Approve</button>
+            <button style="flex:0 0 auto;white-space:nowrap;height:24px;padding:0 10px;border:1px solid #323634;border-radius:5px;background:transparent;color:#AEB5B1;font:inherit;font-size:11.5px;cursor:pointer" style-hover="background:#232624">Revert</button>
+          </div>
+          <div style="flex:1;overflow:auto;font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:1.65">
+            <sc-for list="{{ diff }}" as="l" hint-placeholder-count="14">
+              <div style="{{ l.style }}"><span style="display:inline-block;width:22px;color:#5d635f;text-align:center;font-variant-numeric:tabular-nums">{{ l.sign }}</span><span style="display:inline-block;width:38px;color:#5d635f;text-align:right;padding-right:12px;font-variant-numeric:tabular-nums">{{ l.n }}</span>{{ l.s }}</div>
+            </sc-for>
+          </div>
+          <div onMouseDown="{{ onReviewBottomResize }}" style="{{ reviewBottomHandleStyle }}" style-hover="background:#68AEA5"></div>
+          <div style="flex:0 0 auto;display:flex;flex-direction:column">
+            <div style="display:flex;align-items:center;gap:2px;padding:6px 12px;min-width:0;overflow:auto">
+              <sc-for list="{{ bottomTabs }}" as="t" hint-placeholder-count="3">
+                <button onClick="{{ t.go }}" style="{{ t.style }}">{{ t.label }}<span style="{{ t.dotStyle }}"></span></button>
+              </sc-for>
+            </div>
+            <div style="{{ reviewBottomStyle }}">
+              <sc-if value="{{ showDiagList }}" hint-placeholder-val="{{ false }}">
+                <sc-for list="{{ diagList }}" as="d" hint-placeholder-count="4">
+                  <div style="display:flex;gap:10px;padding:3px 0;min-width:0;font-family:'JetBrains Mono',monospace;font-size:11.5px">
+                    <span style="{{ d.sevStyle }}">{{ d.sev }}</span>
+                    <span style="color:#68AEA5;flex:0 0 auto;white-space:nowrap">{{ d.loc }}</span>
+                    <span style="flex:1;min-width:0;color:#AEB5B1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ d.msg }}</span>
+                  </div>
+                </sc-for>
+              </sc-if>
+              <sc-if value="{{ showBottomText }}" hint-placeholder-val="{{ true }}">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:1.6;color:#AEB5B1;white-space:pre-wrap">{{ bottomText }}</div>
+              </sc-if>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;display:flex;flex-direction:column;min-width:0">
+        <div style="display:flex;align-items:center;gap:4px;padding:9px 16px;border-bottom:1px solid #1B1D1C;overflow-x:auto">
+          <sc-for list="{{ setTabs }}" as="t" hint-placeholder-count="6">
+            <button onClick="{{ t.go }}" style="{{ t.style }}">{{ t.label }}</button>
+          </sc-for>
+        </div>
+        <div style="flex:1;overflow:auto;padding:18px 16px 40px">
+          <div style="max-width:760px;display:flex;flex-direction:column;gap:16px">
+
+            <sc-if value="{{ showShell }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;flex-direction:column;gap:14px">
+                <div style="display:flex;flex-direction:column;gap:3px">
+                  <span style="font-size:13px;font-weight:600">Default shell</span>
+                  <span style="font-size:12px;color:#909894;text-wrap:pretty">Tervin runs your real shell. Your prompt, aliases and plugins are untouched.</span>
+                </div>
+                <div style="border:1px solid #232624;border-radius:7px;overflow:hidden">
+                  <sc-for list="{{ shells }}" as="sh" hint-placeholder-count="4">
+                    <button onClick="{{ sh.go }}" style="{{ sh.style }}" style-hover="background:#1B1D1C">
+                      <span style="{{ sh.radio }}"></span>
+                      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                        <span style="font-size:12.5px">{{ sh.name }}</span>
+                        <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#909894;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ sh.path }}</span>
+                      </div>
+                      <span style="flex:0 0 auto;font-size:11px;color:#68AEA5;white-space:nowrap">{{ sh.note }}</span>
+                    </button>
+                  </sc-for>
+                </div>
+                <div style="display:flex;flex-direction:column;border:1px solid #232624;border-radius:7px;overflow:hidden">
+                  <sc-for list="{{ integrationRows }}" as="r" hint-placeholder-count="5">
+                    <div style="display:flex;gap:14px;padding:9px 12px;border-bottom:1px solid #1B1D1C;min-width:0">
+                      <span style="flex:0 0 150px;font-size:12px;color:#E5E8E5">{{ r.label }}</span>
+                      <span style="flex:1;min-width:0;font-size:12px;color:#909894;line-height:1.5;text-wrap:pretty">{{ r.value }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ showAppearance }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-direction:column;gap:16px">
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  <span style="font-size:13px;font-weight:600">Terminal font</span>
+                  <div style="display:flex;flex-wrap:wrap;gap:6px">
+                    <sc-for list="{{ fonts }}" as="f" hint-placeholder-count="5">
+                      <button onClick="{{ f.go }}" style="{{ f.style }}">{{ f.label }}</button>
+                    </sc-for>
+                  </div>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:22px">
+                  <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
+                    <span style="font-size:12px;color:#909894">Size</span>
+                    <div style="display:flex;gap:6px">
+                      <sc-for list="{{ sizes }}" as="z" hint-placeholder-count="5">
+                        <button onClick="{{ z.go }}" style="{{ z.style }}">{{ z.label }}</button>
+                      </sc-for>
+                    </div>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
+                    <span style="font-size:12px;color:#909894">Ligatures</span>
+                    <div style="display:flex;gap:6px">
+                      <sc-for list="{{ ligatureOpts }}" as="z" hint-placeholder-count="2">
+                        <button onClick="{{ z.go }}" style="{{ z.style }}">{{ z.label }}</button>
+                      </sc-for>
+                    </div>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
+                    <span style="font-size:12px;color:#909894">Cursor</span>
+                    <div style="display:flex;gap:6px">
+                      <sc-for list="{{ cursors }}" as="z" hint-placeholder-count="3">
+                        <button onClick="{{ z.go }}" style="{{ z.style }}">{{ z.label }}</button>
+                      </sc-for>
+                    </div>
+                  </div>
+                </div>
+                <div style="{{ previewStyle }}">{{ previewText }}</div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ showThemes }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-direction:column;gap:12px">
+                <div style="display:flex;flex-direction:column;gap:3px">
+                  <span style="font-size:13px;font-weight:600">Themes</span>
+                  <span style="font-size:12px;color:#909894;text-wrap:pretty">Fifteen built-in themes. Light themes switch automatically if you follow the system appearance.</span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(146px,1fr));gap:10px">
+                  <sc-for list="{{ themes }}" as="th" hint-placeholder-count="15">
+                    <button onClick="{{ th.go }}" style="{{ th.style }}">
+                      <span style="{{ th.swatchStyle }}">
+                        <span style="{{ th.barStyle }}"></span>
+                        <span style="{{ th.inkStyle }}"></span>
+                        <span style="{{ th.accentStyle }}"></span>
+                      </span>
+                      <span style="{{ th.labelStyle }}">{{ th.name }}<span style="{{ th.checkStyle }}">✓</span></span>
+                    </button>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ showAgents }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-direction:column;gap:12px">
+                <div style="display:flex;flex-direction:column;gap:3px">
+                  <span style="font-size:13px;font-weight:600">Agent profiles</span>
+                  <span style="font-size:12px;color:#909894;text-wrap:pretty">Run several Claude installs side by side — separate accounts, configs and MCP servers. Switch with ⌘⇧P; each pane remembers its profile.</span>
+                </div>
+                <div style="border:1px solid #232624;border-radius:7px;overflow:hidden">
+                  <sc-for list="{{ profiles }}" as="p" hint-placeholder-count="4">
+                    <button onClick="{{ p.go }}" style="{{ p.style }}" style-hover="background:#1B1D1C">
+                      <span style="{{ p.dot }}"></span>
+                      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+                        <span style="font-family:'JetBrains Mono',monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.cmd }}</span>
+                        <span style="font-size:11px;color:#909894;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.detail }}</span>
+                        <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5d635f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">model {{ p.model }} · mcp {{ p.mcp }}</span>
+                      </div>
+                      <span style="{{ p.checkStyle }}">✓</span>
+                    </button>
+                  </sc-for>
+                </div>
+                <button style="align-self:flex-start;height:28px;padding:0 12px;border:1px solid #323634;border-radius:5px;background:transparent;color:#E5E8E5;font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap" style-hover="background:#232624">Add a profile</button>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ showSystem }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-direction:column;gap:16px">
+                <div style="display:flex;flex-direction:column;gap:3px">
+                  <span style="font-size:13px;font-weight:600">macOS integration</span>
+                  <span style="font-size:12px;color:#909894;text-wrap:pretty">Tervin behaves like a native Mac app: system notifications you can act on, a Dock badge for work that needs you, and credentials in the Keychain.</span>
+                </div>
+                <sc-for list="{{ macGroups }}" as="g" hint-placeholder-count="4">
+                  <div style="display:flex;flex-direction:column;gap:8px">
+                    <span style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#909894">{{ g.title }}</span>
+                    <div style="border:1px solid #232624;border-radius:7px;overflow:hidden">
+                      <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="4">
+                        <div style="display:flex;align-items:center;gap:14px;padding:10px 12px;border-bottom:1px solid #1B1D1C;min-width:0">
+                          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                            <span style="font-size:12.5px">{{ r.label }}</span>
+                            <span style="font-size:11.5px;color:#909894;line-height:1.5;text-wrap:pretty">{{ r.value }}</span>
+                          </div>
+                          <span style="{{ r.toggleStyle }}"><span style="{{ r.knobStyle }}"></span></span>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ showKeys }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-direction:column;gap:12px">
+                <span style="font-size:13px;font-weight:600">Keyboard</span>
+                <div style="border:1px solid #232624;border-radius:7px;overflow:hidden">
+                  <sc-for list="{{ keyRows }}" as="k" hint-placeholder-count="7">
+                    <div style="display:flex;align-items:center;gap:14px;padding:9px 12px;border-bottom:1px solid #1B1D1C;min-width:0">
+                      <span style="flex:0 0 110px;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#68AEA5">{{ k.k }}</span>
+                      <span style="flex:1;min-width:0;font-size:12px;color:#AEB5B1;text-wrap:pretty">{{ k.v }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ drawerOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="{{ drawerStyle }}">
+        <div onMouseDown="{{ onDrawerResize }}" style="{{ drawerHandleStyle }}" style-hover="background:#68AEA5"></div>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+        <div style="display:flex;align-items:center;gap:9px;padding:10px 13px;border-bottom:1px solid #232624;min-width:0">
+          <span style="width:7px;height:7px;border-radius:50%;background:#D5AB68;flex:0 0 7px"></span>
+          <span style="font-weight:600;font-size:12.5px;white-space:nowrap">Claude Code</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5d635f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">tier 1 · 3f2a</span>
+          <button onClick="{{ closeDrawer }}" style="flex:0 0 auto;background:transparent;border:none;color:#909894;font:inherit;font-size:14px;cursor:pointer">×</button>
+        </div>
+        <div style="padding:11px 13px;border-bottom:1px solid #232624;display:flex;flex-direction:column;gap:9px">
+          <span style="font-size:12.5px;text-wrap:pretty">Fix the expired-grant path in refresh_token</span>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border:1px solid #D5AB68;border-radius:4px;color:#D5AB68;font-size:11.5px;white-space:nowrap">Waiting for permission</span>
+            <button onClick="{{ openApproval }}" style="flex:0 0 auto;white-space:nowrap;height:22px;padding:0 9px;border:none;border-radius:4px;background:#68AEA5;color:#141514;font:inherit;font-size:11.5px;font-weight:600;cursor:pointer" style-hover="background:#8CC9C1">Review request</button>
+            <button style="flex:0 0 auto;white-space:nowrap;height:22px;padding:0 9px;border:1px solid #323634;border-radius:4px;background:transparent;color:#AEB5B1;font:inherit;font-size:11.5px;cursor:pointer" style-hover="background:#232624">Stop</button>
+          </div>
+        </div>
+        <div style="flex:1;overflow:auto;padding:6px 0">
+          <sc-for list="{{ timeline }}" as="e" hint-placeholder-count="8">
+            <div style="display:flex;gap:9px;padding:5px 13px;min-width:0">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5d635f;flex:0 0 44px;padding-top:2px;font-variant-numeric:tabular-nums">{{ e.t }}</span>
+              <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                <span style="{{ e.tagStyle }}">{{ e.tag }}</span>
+                <span style="font-size:12px;color:#E5E8E5;line-height:1.5;text-wrap:pretty">{{ e.text }}</span>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+
+  <div style="height:25px;flex:0 0 25px;display:flex;align-items:center;gap:14px;padding:0 12px;border-top:1px solid #232624;font-family:'JetBrains Mono',monospace;font-size:11px;color:#5d635f;font-variant-numeric:tabular-nums;overflow:hidden">
+    <span style="color:#909894;white-space:nowrap">zsh ~/src/ledger-api</span>
+    <span style="white-space:nowrap">local</span>
+    <span style="white-space:nowrap">2 running · 1 waiting</span>
+    <span style="margin-left:auto;white-space:nowrap">{{ modeLabel }} · {{ activeProfileName }}</span>
+    <span style="white-space:nowrap">42.1k tok · $0.38</span>
+    <button onClick="{{ showNotif }}" style="flex:0 0 auto;white-space:nowrap;background:transparent;border:none;color:#909894;font:inherit;font-size:11px;cursor:pointer">{{ levelLabel }} mode</button>
+    <button onClick="{{ toggleDrawer }}" style="flex:0 0 auto;white-space:nowrap;background:transparent;border:none;color:#909894;font:inherit;font-size:11px;cursor:pointer">{{ drawerLabel }} ⌘B</button>
+  </div>
+
+  <sc-if value="{{ paletteOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeAll }}" style="position:absolute;inset:0;background:rgba(10,11,10,0.6);display:flex;align-items:flex-start;justify-content:center;padding:80px 20px 20px;z-index:40">
+      <div onClick="{{ stop }}" style="width:600px;max-width:100%;background:#171918;border:1px solid #323634;border-radius:8px;box-shadow:0 22px 56px rgba(0,0,0,0.55);display:flex;flex-direction:column;max-height:58vh;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:9px;padding:11px 13px;border-bottom:1px solid #232624">
+          <span style="font-family:'JetBrains Mono',monospace;font-size:13px;color:#68AEA5;flex:0 0 auto">❯</span>
+          <input value="{{ query }}" onChange="{{ setQuery }}" placeholder="Command, file, thread, host…" autoFocus="{{ true }}" style="flex:1;min-width:0;background:transparent;border:none;outline:none;color:#E5E8E5;font:inherit;font-size:13.5px" />
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5d635f;flex:0 0 auto">esc</span>
+        </div>
+        <div style="flex:1;overflow:auto;padding:5px 0">
+          <sc-for list="{{ paletteResults }}" as="p" hint-placeholder-count="6">
+            <div style="{{ p.style }}">
+              <span style="{{ p.catStyle }}">{{ p.cat }}</span>
+              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.label }}</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#5d635f;flex:0 0 auto">{{ p.key }}</span>
+            </div>
+          </sc-for>
+          <sc-if value="{{ paletteEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:24px 16px;text-align:center;font-size:12.5px;color:#909894;text-wrap:pretty">No matches. ⌘⏎ runs it in the focused pane.</div>
+          </sc-if>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ approvalOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeAll }}" style="position:absolute;inset:0;background:rgba(10,11,10,0.66);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50">
+      <div onClick="{{ stop }}" style="width:560px;max-width:100%;background:#171918;border:1px solid #323634;border-radius:8px;box-shadow:0 22px 56px rgba(0,0,0,0.55);overflow:hidden">
+        <div style="display:flex;align-items:center;gap:9px;padding:12px 15px;border-bottom:1px solid #232624;flex-wrap:wrap">
+          <span style="width:7px;height:7px;border-radius:50%;background:#D5AB68;flex:0 0 7px"></span>
+          <span style="font-weight:600;font-size:12.5px;white-space:nowrap">Permission requested</span>
+          <span style="font-size:11.5px;color:#909894;white-space:nowrap">Claude Code · 3f2a</span>
+          <span style="margin-left:auto;display:inline-flex;align-items:center;height:20px;padding:0 7px;border:1px solid #D77D79;border-radius:4px;color:#D77D79;font-size:11px;white-space:nowrap">Risk: high</span>
+        </div>
+        <div style="padding:13px 15px;display:flex;flex-direction:column;gap:11px">
+          <div style="background:#141514;border:1px solid #323634;border-radius:6px;padding:9px 11px;font-family:'JetBrains Mono',monospace;font-size:12.5px;color:#E5E8E5;white-space:pre-wrap;word-break:break-word">sqlx migrate run --database-url $DATABASE_URL</div>
+          <div style="display:grid;grid-template-columns:96px 1fr;gap:6px 12px;font-size:12px">
+            <span style="color:#909894">Runs in</span><span style="font-family:'JetBrains Mono',monospace;color:#AEB5B1;min-width:0;overflow-wrap:anywhere">~/src/ledger-api → staging.internal:5432</span>
+            <span style="color:#909894">Why</span><span style="color:#AEB5B1;text-wrap:pretty">Applies 20260801_grant_expiry.sql so the refresh test can read the new column.</span>
+            <span style="color:#909894">Effects</span><span style="color:#AEB5B1;text-wrap:pretty">Writes schema to a non-local database. Tervin cannot roll this back. No Git or credential access.</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:11px 15px;border-top:1px solid #232624">
+          <button onClick="{{ closeAll }}" style="flex:0 0 auto;white-space:nowrap;height:28px;padding:0 12px;border:none;border-radius:5px;background:#68AEA5;color:#141514;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="background:#8CC9C1">Approve once</button>
+          <button onClick="{{ closeAll }}" style="flex:0 0 auto;white-space:nowrap;height:28px;padding:0 11px;border:1px solid #323634;border-radius:5px;background:transparent;color:#E5E8E5;font:inherit;font-size:12.5px;cursor:pointer" style-hover="background:#232624">For this task</button>
+          <button onClick="{{ closeAll }}" style="flex:0 0 auto;white-space:nowrap;height:28px;padding:0 11px;border:1px solid #323634;border-radius:5px;background:transparent;color:#E5E8E5;font:inherit;font-size:12.5px;cursor:pointer" style-hover="background:#232624">Edit first</button>
+          <button onClick="{{ closeAll }}" style="margin-left:auto;flex:0 0 auto;white-space:nowrap;height:28px;padding:0 11px;border:1px solid #D77D79;border-radius:5px;background:transparent;color:#D77D79;font:inherit;font-size:12.5px;cursor:pointer" style-hover="background:#232624">Deny</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ bridgeOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeAll }}" style="position:absolute;inset:0;background:rgba(10,11,10,0.66);display:flex;align-items:flex-start;justify-content:center;padding:64px 20px 20px;z-index:45">
+      <div onClick="{{ stop }}" style="width:620px;max-width:100%;background:#171918;border:1px solid #323634;border-radius:8px;box-shadow:0 22px 56px rgba(0,0,0,0.55);display:flex;flex-direction:column;max-height:70vh;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:9px;padding:12px 15px;border-bottom:1px solid #232624">
+          <span style="font-weight:600;font-size:12.5px">Bridge</span>
+          <span style="font-size:11.5px;color:#909894;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Adapters, MCP servers and tools · MCP supported, never required</span>
+          <button onClick="{{ closeAll }}" style="flex:0 0 auto;background:transparent;border:none;color:#909894;font:inherit;font-size:14px;cursor:pointer">×</button>
+        </div>
+        <div style="flex:1;overflow:auto">
+          <sc-for list="{{ bridge }}" as="i" hint-placeholder-count="7">
+            <div style="display:flex;align-items:center;gap:12px;padding:10px 15px;border-bottom:1px solid #1B1D1C;min-width:0" style-hover="background:#1B1D1C">
+              <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                <span style="font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ i.name }}</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#909894;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ i.detail }}</span>
+              </div>
+              <span style="{{ i.stateStyle }}">{{ i.state }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ onboardingOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;inset:0;background:#141514;z-index:60;display:flex;align-items:center;justify-content:center;padding:32px;overflow:auto">
+      <div style="width:600px;max-width:100%;display:flex;flex-direction:column;gap:22px">
+        <div style="display:flex;align-items:center;gap:11px">
+          <svg width="30" height="30" viewBox="0 0 128 128" aria-label="Tervin" style="flex:0 0 30px"><rect width="128" height="128" rx="24" fill="#1B1D1C"></rect><path d="M39 22h20v84H39l11-42z" fill="#E5E8E5"></path><path d="M89 22H69v84h20L78 64z" fill="#AEB5B1"></path><path d="M61 22h6v84h-6z" fill="#68AEA5"></path><path d="M61 56h6v16h-6z" fill="#8CC9C1"></path></svg>
+          <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+            <span style="font-size:18px;font-weight:600;letter-spacing:-0.015em">Tervin</span>
+            <span style="font-size:12.5px;color:#909894">The agent-native terminal workspace.</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#5d635f">{{ obStepLabel }}</span>
+          <span style="font-size:19px;font-weight:600;letter-spacing:-0.015em;text-wrap:pretty">{{ obTitle }}</span>
+          <span style="font-size:12.5px;color:#909894;text-wrap:pretty">{{ obSub }}</span>
+        </div>
+
+        <sc-if value="{{ obStep1 }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-wrap:wrap;gap:9px">
+            <sc-for list="{{ fromOpts }}" as="f" hint-placeholder-count="4">
+              <button onClick="{{ f.go }}" style="{{ f.style }}">
+                <span style="font-size:13px">{{ f.label }}</span>
+                <span style="{{ f.bodyStyle }}">{{ f.body }}</span>
+              </button>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ obStep2 }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <sc-for list="{{ imports }}" as="s" hint-placeholder-count="4">
+              <div style="display:flex;align-items:baseline;gap:11px;padding:11px 0;border-bottom:1px solid #1B1D1C;min-width:0">
+                <span style="{{ s.markStyle }}">✓</span>
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+                  <span style="font-size:13px">{{ s.title }}</span>
+                  <span style="font-size:12px;color:#909894;line-height:1.55;text-wrap:pretty">{{ s.body }}</span>
+                </div>
+                <span style="{{ s.actionStyle }}">{{ s.action }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ obStep3 }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-wrap:wrap;gap:9px">
+            <sc-for list="{{ levelOpts }}" as="l" hint-placeholder-count="3">
+              <button onClick="{{ l.go }}" style="{{ l.style }}">
+                <span style="font-size:13px">{{ l.label }}</span>
+                <span style="{{ l.bodyStyle }}">{{ l.body }}</span>
+              </button>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:9px">
+          <button onClick="{{ obPrimary }}" style="flex:0 0 auto;white-space:nowrap;height:32px;padding:0 14px;border:none;border-radius:6px;background:#68AEA5;color:#141514;font:inherit;font-size:13px;font-weight:600;cursor:pointer" style-hover="background:#8CC9C1">{{ obNextLabel }}</button>
+          <button onClick="{{ obBack }}" style="{{ obBackStyle }}" style-hover="background:#232624">Back</button>
+          <button onClick="{{ hideOnboarding }}" style="flex:0 0 auto;white-space:nowrap;height:32px;padding:0 12px;border:none;background:transparent;color:#5d635f;font:inherit;font-size:12.5px;cursor:pointer" style-hover="color:#909894">Skip</button>
+          <span style="font-size:11.5px;color:#5d635f;text-wrap:pretty">Nothing leaves this machine until you run an agent.</span>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+  <sc-if value="{{ notifOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;top:12px;right:12px;width:346px;max-width:80%;background:#22262A;border:1px solid #3A4046;border-radius:12px;box-shadow:0 16px 40px rgba(0,0,0,0.45);z-index:80;overflow:hidden">
+      <div style="display:flex;gap:11px;padding:12px 13px 10px;min-width:0">
+        <svg width="30" height="30" viewBox="0 0 128 128" aria-label="Tervin" style="flex:0 0 30px;border-radius:7px"><rect width="128" height="128" rx="24" fill="#141514"></rect><path d="M39 22h20v84H39l11-42z" fill="#E5E8E5"></path><path d="M89 22H69v84h20L78 64z" fill="#AEB5B1"></path><path d="M61 22h6v84h-6z" fill="#68AEA5"></path><path d="M61 56h6v16h-6z" fill="#8CC9C1"></path></svg>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+          <div style="display:flex;align-items:baseline;gap:8px;min-width:0">
+            <span style="font-size:12.5px;font-weight:600;color:#F2F4F5;white-space:nowrap">Tervin</span>
+            <span style="font-size:11px;color:#9AA1A7;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">claude-work · ledger-api</span>
+            <span style="font-size:11px;color:#9AA1A7;white-space:nowrap">now</span>
+          </div>
+          <span style="font-size:12.5px;color:#F2F4F5;line-height:1.45;text-wrap:pretty">Claude wants to run a database migration on staging</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#9AA1A7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">sqlx migrate run --database-url $DATABASE_URL</span>
+        </div>
+      </div>
+      <div style="display:flex;border-top:1px solid #3A4046">
+        <button onClick="{{ hideNotif }}" style="flex:1;min-width:0;height:34px;background:transparent;border:none;border-right:1px solid #3A4046;color:#8CC9C1;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap" style-hover="background:#2A2F34">Approve</button>
+        <button onClick="{{ hideNotif }}" style="flex:1;min-width:0;height:34px;background:transparent;border:none;border-right:1px solid #3A4046;color:#E8A9A6;font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap" style-hover="background:#2A2F34">Deny</button>
+        <button onClick="{{ hideNotif }}" style="flex:1;min-width:0;height:34px;background:transparent;border:none;color:#C9D0D5;font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap" style-hover="background:#2A2F34">Open</button>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;defaultSurface&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;terminal&quot;,&quot;agents&quot;,&quot;review&quot;,&quot;settings&quot;],&quot;default&quot;:&quot;terminal&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Layout&quot;},&quot;drawerOpen&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Layout&quot;},&quot;showOnboarding&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Layout&quot;},&quot;defaultProfile&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;claude-work&quot;,&quot;claude-personal&quot;,&quot;codex&quot;,&quot;gemini&quot;],&quot;default&quot;:&quot;claude-personal&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Agents&quot;}}">
+const T = {ink:'#E5E8E5', muted:'#909894', dim:'#5d635f', line:'#323634', teal:'#68AEA5', green:'#85BC7E', amber:'#D5AB68', red:'#D77D79'};
+const tagColor = {plan:T.amber, permission:T.amber, patch:T.teal, command:T.ink, test:T.green, file:T.muted, thread:T.teal};
+
+class Component extends DCLogic {
+  state = {
+    surface: this.props.defaultSurface || 'terminal',
+    drawer: this.props.drawerOpen === true,
+    palette: false, approval: false, bridge: false, more: false,
+    onboarding: this.props.showOnboarding !== false,
+    thread: 0, left: 'changes', bottom: 'tests', q: '',
+    tabs: [
+      {id:'t1', label:'zsh — ledger-api', c:'#85BC7E', kind:'blocks'},
+      {id:'t2', label:'cargo watch', c:'#D5AB68', kind:'text',
+       body:"14:05:03 WARN  auth::token grant expired 41s ago, rejecting refresh\n14:05:03 ERROR http POST /grants/refresh → 500 (unhandled AuthError::GrantExpired)\n14:05:09 INFO  cargo watch: change detected in crates/auth/src/token.rs\n14:05:14 INFO  rebuild finished in 4.8s\n14:05:15 INFO  http POST /grants/refresh → 401 grant_expired\n"},
+      {id:'t3', label:'claude ▸ token refresh', c:'#68AEA5', kind:'text',
+       body:"● Plan approved\n  1. Read crates/auth/src/token.rs\n  2. Reject grants past exp with 401\n  3. Add regression test\n  4. Run migration for grant_expiry\n\n✓ read token.rs, grant.rs, auth_token.rs\n✓ patch token.rs +18 −6\n✓ patch auth_token.rs +31 −0\n\n⏸ permission required\n  sqlx migrate run --database-url $DATABASE_URL\n"}
+    ],
+    panes: [['t1','t2','t3'], []], active: ['t1',''], dragTab: null, nextId: 4,
+    mode: 'plan', planSel: 's3', planEdits: 0, planRev: 2, dragStep: null, planNext: 6,
+    plan: [
+      {id:'s1', title:'Read the token refresh path', detail:'crates/auth/src/token.rs, grant.rs, tests/auth_token.rs', targets:['3 files'], state:'done', include:true},
+      {id:'s2', title:'Reject grants whose expires_at is in the past', detail:'Return AuthError::GrantExpired instead of issuing a pair. Map it to 401 in the route.', targets:['token.rs','grants.rs'], state:'done', include:true},
+      {id:'s3', title:'Add a regression test for the expired grant', detail:'Assert 401 and that no token pair is written to the store.', targets:['auth_token.rs'], state:'running', include:true},
+      {id:'s4', title:'Run the grant_expiry migration on staging', detail:'sqlx migrate run --database-url $DATABASE_URL', targets:['migration','needs approval'], state:'pending', include:true},
+      {id:'s5', title:'Regenerate the OpenAPI spec', detail:'Only the /grants/refresh operation changed.', targets:['ledger.v2.yaml'], state:'pending', include:false}
+    ],
+    paneW: 620, drawerW: 360, agentsW: 460, reviewLeftW: 236, reviewBottomH: 150,
+    profile: this.props.defaultProfile || 'claude-work', profileMenu: false,
+    obStep: 1, obFrom: 'desktop', level: 'standard', notif: false,
+    setTab: 'shell', theme: 'Tervin Dark', font: 'JetBrains Mono', fontSize: 13,
+    ligatures: true, cursor: 'block', shell: 'zsh',
+    vw: typeof window !== 'undefined' ? window.innerWidth : 1440
+  };
+
+  componentDidMount() {
+    this._r = () => this.setState({vw: window.innerWidth});
+    window.addEventListener('resize', this._r);
+    this._k = (e) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); this.setState(s => ({palette: !s.palette, q: ''})); }
+      else if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); this.setState(s => ({drawer: !s.drawer})); }
+      else if (mod && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); this.setState(x => ({profileMenu: !x.profileMenu})); }
+      else if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); this.splitActive(); }
+      else if (e.key === 'Tab' && e.shiftKey && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        const order = ['plan','ask','auto','bypass'];
+        this.setState(x => ({mode: order[(order.indexOf(x.mode) + 1) % order.length]}));
+      }
+      else if (e.key === 'Escape') this.setState({palette:false, approval:false, bridge:false, onboarding:false, profileMenu:false});
+    };
+    window.addEventListener('keydown', this._k);
+  }
+  componentWillUnmount() { window.removeEventListener('keydown', this._k); window.removeEventListener('resize', this._r); }
+
+  chip(c) { return `display:inline-flex;align-items:center;height:19px;padding:0 7px;border:1px solid ${c};border-radius:4px;color:${c};font-size:10.5px;white-space:nowrap;flex:0 0 auto`; }
+  tag(k) { return `font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.04em;text-transform:uppercase;color:${tagColor[k] || T.muted};flex:0 0 auto`; }
+  seg(on) { return `display:flex;align-items:center;gap:6px;height:26px;padding:0 11px;border:none;border-radius:5px;background:${on ? '#232624' : 'transparent'};color:${on ? T.ink : T.muted};font:inherit;font-size:12px;font-weight:${on ? 600 : 400};cursor:pointer;white-space:nowrap;flex:0 0 auto`; }
+  drag(key, axis, min, max, invert) {
+    return (e) => {
+      e.preventDefault();
+      const start = axis === 'x' ? e.clientX : e.clientY;
+      const init = this.state[key];
+      const move = (ev) => {
+        const d = ((axis === 'x' ? ev.clientX : ev.clientY) - start) * (invert ? -1 : 1);
+        this.setState({[key]: Math.max(min, Math.min(max, init + d))});
+      };
+      const up = () => {
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup', up);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      };
+      window.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', up);
+      document.body.style.cursor = axis === 'x' ? 'col-resize' : 'row-resize';
+      document.body.style.userSelect = 'none';
+    };
+  }
+
+  handle(axis, key, min, max, invert) {
+    return {
+      style: axis === 'x'
+        ? 'width:5px;flex:0 0 5px;cursor:col-resize;background:#232624;position:relative;z-index:5'
+        : 'height:5px;flex:0 0 5px;cursor:row-resize;background:#232624',
+      hover: 'background:#68AEA5',
+      onDown: this.drag(key, axis, min, max, invert)
+    };
+  }
+
+  moveTab(id, toPane, index) {
+    const panes = this.state.panes.map(p => p.filter(t => t !== id));
+    const target = panes[toPane];
+    target.splice(index === undefined || index < 0 ? target.length : index, 0, id);
+    const active = [...this.state.active];
+    active[toPane] = id;
+    panes.forEach((p, i) => { if (!p.includes(active[i])) active[i] = p[0] || ''; });
+    this.setState({panes, active, dragTab: null});
+  }
+
+  closeTab(id) {
+    const tabs = this.state.tabs.filter(t => t.id !== id);
+    const panes = this.state.panes.map(p => p.filter(t => t !== id));
+    const active = [...this.state.active];
+    panes.forEach((p, i) => { if (!p.includes(active[i])) active[i] = p[0] || ''; });
+    if (!panes[0].length && panes[1].length) { panes[0] = panes[1]; panes[1] = []; active[0] = active[1]; active[1] = ''; }
+    this.setState({tabs, panes, active});
+  }
+
+  addTab(pane) {
+    const id = 't' + this.state.nextId;
+    const panes = this.state.panes.map(p => [...p]);
+    panes[pane].push(id);
+    const active = [...this.state.active];
+    active[pane] = id;
+    this.setState({
+      tabs: [...this.state.tabs, {id, label:'zsh — ledger-api', c:'#85BC7E', kind:'text', body:'❯ '}],
+      panes, active, nextId: this.state.nextId + 1
+    });
+  }
+
+  splitActive() {
+    const from = this.state.panes[1].length ? 1 : 0;
+    const to = from === 0 ? 1 : 0;
+    if (this.state.panes[from].length < 2) return;
+    this.moveTab(this.state.active[from], to, 0);
+  }
+
+  pill(on) { return `height:24px;padding:0 10px;border:1px solid ${on ? '#68AEA5' : '#232624'};border-radius:5px;background:transparent;color:${on ? '#E5E8E5' : '#909894'};font:inherit;font-size:11.5px;cursor:pointer;white-space:nowrap;flex:0 0 auto`; }
+  minitab(on) { return `height:22px;padding:0 9px;border:none;border-radius:4px;background:${on ? '#232624' : 'transparent'};color:${on ? T.ink : T.muted};font:inherit;font-size:11.5px;cursor:pointer;white-space:nowrap;flex:0 0 auto;display:flex;align-items:center;gap:6px`; }
+
+  renderVals() {
+    const s = this.state;
+    const wide = s.vw >= 860;
+
+    const surfaces = [
+      {id:'terminal', label:'Terminal', badge:''},
+      {id:'plan', label:'Plan', badge:'4'},
+      {id:'agents', label:'Agents', badge:'3'},
+      {id:'review', label:'Review', badge:'3'}
+    ].map(x => ({
+      label:x.label, badge:x.badge,
+      style:this.seg(s.surface === x.id),
+      badgeStyle:x.badge ? `font-family:'JetBrains Mono',monospace;font-size:10px;color:${T.dim}` : 'display:none',
+      go:() => this.setState({surface:x.id})
+    }));
+
+    const byId = {};
+    s.tabs.forEach(t => { byId[t.id] = t; });
+    const split = s.panes[1].length > 0;
+    const termPanes = s.panes.map((ids, pi) => {
+      if (!ids.length) return null;
+      const activeId = s.active[pi] || ids[0];
+      const at = byId[activeId] || {};
+      const h = this.handle('x', 'paneW', 260, Math.max(320, s.vw - 320));
+      return {
+        wrapStyle: split && pi === 0
+          ? `width:${s.paneW}px;flex:0 0 ${s.paneW}px;display:flex;min-width:0`
+          : 'flex:1 1 auto;display:flex;min-width:0',
+        handleStyle: pi === 1 ? h.style : 'display:none',
+        onResize: h.onDown,
+        isBlocks: at.kind === 'blocks',
+        isText: at.kind !== 'blocks',
+        body: at.body || '',
+        onDropStrip: (e) => { e.preventDefault(); if (s.dragTab) this.moveTab(s.dragTab, pi); },
+        allowDrop: (e) => e.preventDefault(),
+        onAdd: () => this.addTab(pi),
+        closePaneStyle: split ? "background:transparent;border:none;color:#5d635f;cursor:pointer;font-size:12px;width:24px;flex:0 0 24px" : 'display:none',
+        onClosePane: () => ids.slice().forEach(id => this.moveTab(id, pi === 0 ? 1 : 0)),
+        tabs: ids.map((id, ti) => {
+          const t = byId[id] || {};
+          const on = id === activeId;
+          return {
+            label: t.label,
+            style: `display:flex;align-items:center;gap:7px;min-width:0;max-width:230px;padding:0 8px 0 11px;border:none;border-right:1px solid #1B1D1C;border-bottom:1px solid ${on ? T.teal : 'transparent'};background:${on ? '#181A19' : 'transparent'};color:${on ? T.ink : T.muted};font-family:'JetBrains Mono',monospace;font-size:11.5px;cursor:grab`,
+            dot: `width:5px;height:5px;border-radius:50%;background:${t.c};flex:0 0 5px`,
+            closeStyle: 'flex:0 0 auto;background:transparent;border:none;color:#5d635f;font:inherit;font-size:12px;cursor:pointer;padding:0 2px',
+            go: () => { const a = [...s.active]; a[pi] = id; this.setState({active:a}); },
+            onClose: (e) => { e.stopPropagation(); this.closeTab(id); },
+            onDragStart: () => this.setState({dragTab: id}),
+            onDragEnd: () => this.setState({dragTab: null}),
+            onDrop: (e) => { e.preventDefault(); e.stopPropagation(); if (s.dragTab && s.dragTab !== id) this.moveTab(s.dragTab, pi, ti); }
+          };
+        })
+      };
+    }).filter(Boolean);
+
+    const dropSplitStyle = s.dragTab && !split
+      ? 'position:absolute;top:0;right:0;bottom:0;width:34%;border-left:1px dashed #68AEA5;background:rgba(104,174,165,0.09);display:flex;align-items:center;justify-content:center;font-size:11.5px;color:#68AEA5;z-index:8'
+      : 'display:none';
+
+    const stColor = {ok:T.green, fail:T.red, run:T.teal};
+    const guided = s.level === 'guided';
+    const blocks = [
+      {st:'ok', cmd:'git switch -c fix/token-refresh', meta:'0.04s · 14:02', out:"Switched to a new branch 'fix/token-refresh'",
+       plain:'Started a separate copy of the project so nothing touches the main version.'},
+      {st:'fail', cmd:'cargo test auth::token', meta:'exit 101 · 12.41s · 14:02', out:"running 24 tests\n........................F\n\n---- auth::token::token_refresh_rejects_expired_grant ----\npanicked at crates/auth/src/token.rs:214\nassertion `left == right` failed\n  left: 200\n right: 401\n\ntest result: FAILED. 23 passed; 1 failed",
+       plain:'Ran the automated checks. One failed: an expired login should be refused, but it was accepted.'},
+      {st:'run', cmd:'claude "fix the expired-grant path in refresh_token"', meta:'01:14 · 14:03', out:"thread 3f2a · plan approved · 3 files read · waiting for permission to run sqlx migrate",
+       plain:'Asked Claude to fix it. It has written a plan and is now waiting for your approval.'}
+    ].map(b => ({
+      cmd:b.cmd, meta:b.meta, out:b.out, plain:b.plain,
+      plainStyle: guided
+        ? 'margin-top:6px;padding:6px 10px 6px 16px;border-left:2px solid #323634;font-size:12px;color:#909894;line-height:1.5;text-wrap:pretty'
+        : 'display:none',
+      mark:`width:6px;height:6px;border-radius:50%;background:${stColor[b.st]};flex:0 0 6px;opacity:${b.st === 'ok' ? 0.55 : 1};transform:translateY(-1px)`
+    }));
+
+    const threadDefs = [
+      {task:'Fix expired-grant path in refresh_token', meta:'Claude Code · tier 1 · sonnet-4.6 · 3 files · 01:14', state:'Waiting', c:T.amber,
+       title:'claude ▸ token refresh · waiting for permission', action:'Review request',
+       body:"● Plan approved\n  1. Read crates/auth/src/token.rs\n  2. Reject grants past exp with 401\n  3. Add regression test\n  4. Run migration for grant_expiry\n\n✓ read token.rs, grant.rs, auth_token.rs\n✓ patch token.rs +18 −6\n✓ patch auth_token.rs +31 −0\n\n⏸ permission required\n  sqlx migrate run --database-url $DATABASE_URL"},
+      {task:'Regenerate OpenAPI spec from route macros', meta:'Gemini CLI · tier 2 · 1 file · 04:36', state:'Editing', c:T.teal,
+       title:'gemini ▸ openapi · editing', action:'Open pane',
+       body:"> scanning crates/api/src/routes/*.rs\n  found 47 route macros\n> writing openapi/ledger.v2.yaml\n  paths: 47  schemas: 61\n> validating against spec 3.1\n  2 warnings\n    - operationId missing: POST /grants/refresh\n    - example missing: GrantExpiry"},
+      {task:'Backfill tests for billing::proration', meta:'Aider · tier 3 · managed pane · 11:02', state:'Unknown', c:T.muted,
+       title:'aider ▸ billing tests · managed pane', action:'Open pane',
+       body:"tervin cannot infer state for this runtime.\nterminal output is authoritative.\n\ntests/billing/test_proration.py\n  added 6 cases\n  pytest -k proration … 4 passed, 2 errors"},
+      {task:'Bump sqlx and fix migration drift', meta:'Codex · tier 1 · completed 41 min ago', state:'Done', c:T.green,
+       title:'codex ▸ sqlx bump · completed', action:'Open diff',
+       body:"✓ 9 files changed\n✓ cargo test — 312 passed\n✓ reviewed and merged into fix/token-refresh"}
+    ];
+    const threads = threadDefs.map((t, i) => ({
+      task:t.task, meta:t.meta, state:t.state,
+      style:`display:flex;align-items:center;gap:11px;width:100%;padding:11px 15px;border:none;border-bottom:1px solid #1B1D1C;background:${s.thread === i ? '#1B1D1C' : 'transparent'};border-left:2px solid ${s.thread === i ? T.teal : 'transparent'};color:${T.ink};font:inherit;cursor:pointer;min-width:0`,
+      dot:`width:7px;height:7px;border-radius:50%;background:${t.c};flex:0 0 7px`,
+      stateStyle:this.chip(t.c),
+      go:() => this.setState({thread:i})
+    }));
+    const sel = threadDefs[s.thread] || threadDefs[0];
+    const selected = {
+      title:sel.title, body:sel.body, action:sel.action,
+      actionStyle:`flex:0 0 auto;white-space:nowrap;height:22px;padding:0 9px;border:1px solid ${sel.state === 'Waiting' ? T.teal : T.line};border-radius:4px;background:${sel.state === 'Waiting' ? T.teal : 'transparent'};color:${sel.state === 'Waiting' ? '#141514' : T.AEB || '#AEB5B1'};font:inherit;font-size:11.5px;font-weight:${sel.state === 'Waiting' ? 600 : 400};cursor:pointer`
+    };
+
+    const timeline = [
+      {t:'14:03:03', tag:'context.attached', k:'file', text:'Failed test Block attached as context'},
+      {t:'14:03:09', tag:'plan.proposed', k:'plan', text:'4-step plan proposed'},
+      {t:'14:03:11', tag:'plan.approved', k:'plan', text:'Plan approved by you'},
+      {t:'14:03:14', tag:'file.read', k:'file', text:'Read token.rs, grant.rs, auth_token.rs'},
+      {t:'14:03:41', tag:'patch.proposed', k:'patch', text:'token.rs +18 −6 · 2 hunks'},
+      {t:'14:03:52', tag:'command.proposed', k:'command', text:'sqlx migrate run --database-url $DATABASE_URL'},
+      {t:'14:03:52', tag:'permission.requested', k:'permission', text:'Waiting for your approval — writes schema to staging'}
+    ].map(e => ({t:e.t, tag:e.tag, text:e.text, tagStyle:this.tag(e.k)}));
+
+    const leftTabs = [['changes','Changes'],['files','Files']].map(([id, label]) => ({
+      label, style:this.minitab(s.left === id), go:() => this.setState({left:id})
+    }));
+    const changes = [
+      {mark:'M', name:'crates/auth/src/token.rs', tail:'+18 −6', c:T.amber, on:true},
+      {mark:'M', name:'crates/auth/tests/auth_token.rs', tail:'+31', c:T.amber},
+      {mark:'A', name:'migrations/20260801_grant_expiry.sql', tail:'+9', c:T.green},
+      {mark:'?', name:'openapi/ledger.v2.yaml', tail:'untracked', c:T.muted}
+    ];
+    const tree = [
+      {mark:'▾', name:'crates', tail:'', c:T.muted},
+      {mark:'', name:'  auth/src/token.rs', tail:'M', c:T.amber, on:true},
+      {mark:'', name:'  auth/src/grant.rs', tail:'', c:T.dim},
+      {mark:'', name:'  api/src/routes/', tail:'', c:T.dim},
+      {mark:'▾', name:'migrations', tail:'', c:T.muted},
+      {mark:'', name:'  20260801_grant_expiry.sql', tail:'A', c:T.green},
+      {mark:'', name:'AGENTS.md', tail:'', c:T.teal},
+      {mark:'', name:'Cargo.toml', tail:'', c:T.dim}
+    ];
+    const leftList = (s.left === 'changes' ? changes : tree).map(f => ({
+      mark:f.mark || '·', name:f.name, tail:f.tail,
+      style:`display:flex;align-items:center;gap:8px;padding:5px 12px;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:${f.on ? T.ink : '#AEB5B1'};background:${f.on ? '#232624' : 'transparent'};cursor:pointer;min-width:0`,
+      markStyle:`width:11px;flex:0 0 11px;color:${f.c};font-size:10px`,
+      tailStyle:`flex:0 0 auto;font-size:10.5px;color:${f.c};white-space:nowrap`
+    }));
+
+    const lineStyle = (k) => {
+      const bg = k === 'add' ? 'rgba(133,188,126,0.10)' : k === 'del' ? 'rgba(215,125,121,0.10)' : 'transparent';
+      const fg = k === 'add' ? '#C7E0C2' : k === 'del' ? '#E9BEBC' : '#AEB5B1';
+      return `background:${bg};color:${fg};padding-right:10px;white-space:pre;min-width:0`;
+    };
+    const diff = [
+      ['ctx','209','        state: &AppState,'],
+      ['ctx','210','        grant: RefreshGrant,'],
+      ['ctx','211','    ) -> Result<TokenPair, AuthError> {'],
+      ['del','212','        let record = state.grants.load(&grant.id).await?;'],
+      ['del','213',''],
+      ['del','214','        // TODO: expiry check'],
+      ['del','215','        issue_pair(&record)'],
+      ['add','212','        let record = state.grants'],
+      ['add','213','            .load(&grant.id)'],
+      ['add','214','            .await?;'],
+      ['add','215',''],
+      ['add','216','        if record.expires_at <= Utc::now() {'],
+      ['add','217','            return Err(AuthError::GrantExpired);'],
+      ['add','218','        }'],
+      ['add','219',''],
+      ['add','220','        issue_pair(&record)'],
+      ['ctx','221','    }']
+    ].map(([k, n, str]) => ({n, s:str, sign:k === 'add' ? '+' : k === 'del' ? '−' : '', style:lineStyle(k)}));
+
+    const bottomDefs = [
+      {id:'tests', label:'Tests', c:T.green},
+      {id:'logs', label:'Logs', c:T.amber},
+      {id:'diagnostics', label:'Diagnostics', c:T.red}
+    ];
+    const bottomTabs = bottomDefs.map(b => ({
+      label:b.label, style:this.minitab(s.bottom === b.id),
+      dotStyle:`width:5px;height:5px;border-radius:50%;background:${b.c};flex:0 0 5px`,
+      go:() => this.setState({bottom:b.id})
+    }));
+    const bottomText = s.bottom === 'tests'
+      ? "❯ cargo test auth::token\nrunning 24 tests\n........................\n\ntest result: ok. 24 passed; 0 failed; finished in 11.87s\n❯ "
+      : "14:05:03 WARN  auth::token grant expired 41s ago, rejecting refresh\n14:05:03 ERROR http POST /grants/refresh → 500 (unhandled AuthError::GrantExpired)\n14:05:09 INFO  cargo watch: change detected in token.rs\n14:05:14 INFO  rebuild finished in 4.8s\n14:05:15 INFO  http POST /grants/refresh → 401 grant_expired";
+    const diagList = [
+      {sev:'error', loc:'grants.rs:74', msg:'AuthError::GrantExpired not mapped to a status code', c:T.red},
+      {sev:'warn', loc:'token.rs:231', msg:'unused import: chrono::Duration', c:T.amber},
+      {sev:'warn', loc:'grant.rs:12', msg:'field `legacy_scope` is never read', c:T.amber},
+      {sev:'warn', loc:'ledger.v2.yaml', msg:'operationId missing for POST /grants/refresh', c:T.amber}
+    ].map(d => ({sev:d.sev, loc:d.loc, msg:d.msg, sevStyle:`flex:0 0 42px;color:${d.c}`}));
+
+    const bridge = [
+      {name:'Claude Code', detail:'runtime adapter · tier 1 · workspace · Tervin Rules', state:'Ready', c:T.green},
+      {name:'Codex CLI', detail:'runtime adapter · tier 1 · workspace · Tervin Rules', state:'Ready', c:T.green},
+      {name:'Gemini CLI', detail:'runtime adapter · tier 2 · project · observed only', state:'Ready', c:T.green},
+      {name:'Aider', detail:'managed command · tier 3 · pane · not interceptable', state:'Ready', c:T.amber},
+      {name:'Postgres MCP', detail:'mcp server · staging · read + migrate', state:'Auth required', c:T.amber},
+      {name:'GitHub MCP', detail:'mcp server · org ledger · read PRs and issues', state:'Ready', c:T.green},
+      {name:'Sentry tools', detail:'extension · project · read events', state:'Failing', c:T.red}
+    ].map(i => ({name:i.name, detail:i.detail, state:i.state, stateStyle:this.chip(i.c)}));
+
+    const fromDefs = [
+      {id:'desktop', label:'The Claude desktop app', body:'You chat with Claude, then copy code somewhere else.'},
+      {id:'vscode', label:'VS Code or Cursor', body:'You use the extension or the integrated terminal.'},
+      {id:'terminal', label:'A terminal already', body:'iTerm2, Terminal.app, Warp, Ghostty, tmux.'},
+      {id:'new', label:'None of these yet', body:'You are setting up a machine for the first time.'}
+    ];
+    const fromOpts = fromDefs.map(f => ({
+      label:f.label, body:f.body,
+      style:`display:flex;flex-direction:column;gap:4px;align-items:flex-start;text-align:left;padding:13px 14px;border:1px solid ${s.obFrom === f.id ? T.teal : '#232624'};border-radius:8px;background:${s.obFrom === f.id ? '#1B1D1C' : 'transparent'};color:${T.ink};font:inherit;cursor:pointer;min-width:0;flex:1 1 240px`,
+      bodyStyle:`font-size:11.5px;color:${T.muted};line-height:1.5;text-wrap:pretty`,
+      go:() => this.setState({obFrom:f.id})
+    }));
+
+    const importsByFrom = {
+      desktop: [
+        {t:'Your Claude account', b:'Signed in as liv@ledger.io. No API key, no billing setup — the same account you use in the desktop app.', a:'Connected'},
+        {t:'Two Claude installs found', b:'claude-work and claude-personal stay separate. Switch with the profile button at the top right.', a:'Kept apart'},
+        {t:'Your projects', b:'The 6 folders you used with the desktop app are added as Tervin workspaces.', a:'6 added'},
+        {t:'Nothing is uploaded', b:'Tervin reads these folders on your Mac. Files only leave when you ask Claude to work on them.', a:'Local'}
+      ],
+      vscode: [
+        {t:'Editor settings', b:'Theme, font, font size and tab width copied from VS Code so the text looks the same.', a:'Imported'},
+        {t:'Keyboard shortcuts', b:'⌘P becomes the Tervin palette, ⌘⇧P stays the profile switcher, ⌃` opens a terminal.', a:'Mapped'},
+        {t:'Workspaces', b:'Your 4 recent VS Code folders are added, with their Git branches.', a:'4 added'},
+        {t:'Your editor still works', b:'“Open in editor” on any file or diff hands it straight back to VS Code.', a:'Linked'}
+      ],
+      terminal: [
+        {t:'Shell and prompt', b:'zsh 5.9 with Oh My Zsh and powerlevel10k detected — rendered exactly as it is today.', a:'Detected'},
+        {t:'Profiles and hosts', b:'SSH hosts read from ~/.ssh/config. tmux and zellij sessions can be attached.', a:'12 hosts'},
+        {t:'Keybindings', b:'iTerm2 and Terminal.app key maps imported, including split and pane navigation.', a:'Imported'},
+        {t:'Agents on this machine', b:'Claude Code, Codex, Gemini CLI and Aider found. Each keeps its own permission tier.', a:'4 found'}
+      ],
+      new: [
+        {t:'Sign in with Claude', b:'Use the same account as the Claude app. Nothing to configure.', a:'1 step'},
+        {t:'Pick a folder', b:'Choose any folder on your Mac. Tervin opens a shell there and indexes it locally.', a:'Choose'},
+        {t:'Guided mode on', b:'Every command gets a plain-English line under it, and nothing runs without asking you.', a:'On'},
+        {t:'Nothing leaves your Mac', b:'No telemetry, no cloud sync. Files go to Claude only when you start a task.', a:'Local'}
+      ]
+    };
+    const imports = (importsByFrom[s.obFrom] || importsByFrom.desktop).map(x => ({
+      title:x.t, body:x.b, action:x.a,
+      markStyle:`color:${T.green};font-family:'JetBrains Mono',monospace;font-size:12.5px;flex:0 0 12px`,
+      actionStyle:`font-family:'JetBrains Mono',monospace;font-size:10.5px;color:${T.teal};white-space:nowrap;flex:0 0 auto`
+    }));
+
+    const levelDefs = [
+      {id:'guided', label:'Guided', body:'A plain-English line under every command. Nothing runs without asking. Best if you are new to the terminal.'},
+      {id:'standard', label:'Standard', body:'Explanations on demand. Risky actions still ask first.'},
+      {id:'expert', label:'Expert', body:'No explanations. Approvals only for destructive or production actions.'}
+    ];
+    const levelOpts = levelDefs.map(l => ({
+      label:l.label, body:l.body,
+      style:`display:flex;flex-direction:column;gap:4px;align-items:flex-start;text-align:left;padding:13px 14px;border:1px solid ${s.level === l.id ? T.teal : '#232624'};border-radius:8px;background:${s.level === l.id ? '#1B1D1C' : 'transparent'};color:${T.ink};font:inherit;cursor:pointer;min-width:0;flex:1 1 200px`,
+      bodyStyle:`font-size:11.5px;color:${T.muted};line-height:1.5;text-wrap:pretty`,
+      go:() => this.setState({level:l.id})
+    }));
+
+    const obTitles = {
+      1: {t:'Where do you work today?', s:'Tervin brings your setup across. This takes about a minute.'},
+      2: {t:'Here is what Tervin found', s:'Nothing has been changed yet. Uncheck anything you would rather keep separate.'},
+      3: {t:'How much do you want to see?', s:'You can change this later in Settings — it only affects how much Tervin explains.'}
+    };
+
+    const setup = [
+      {mark:'✓', c:T.green, title:'zsh 5.9 · shell integration installed', body:'Prompt boundaries, exit codes, cwd and Git state. Tervin works without it.', action:'Done'},
+      {mark:'✓', c:T.green, title:'~/src/ledger-api indexed', body:'Rust workspace, 14 crates, on fix/token-refresh. Blocks and scrollback stored locally.', action:'Done'},
+      {mark:'○', c:T.teal, title:'4 agents found on this machine', body:'Claude Code, Codex, Gemini CLI, Aider — each with its own permission tier under Tervin Rules.', action:'Review'},
+      {mark:'○', c:T.muted, title:'Telemetry and cloud sync off', body:'No scrollback, files, commands or environment values leave this machine unless an agent needs them.', action:'Off'}
+    ].map(x => ({mark:x.mark, title:x.title, body:x.body, action:x.action,
+      markStyle:`color:${x.c};font-family:'JetBrains Mono',monospace;font-size:12.5px;flex:0 0 12px`,
+      actionStyle:`font-family:'JetBrains Mono',monospace;font-size:10.5px;color:${x.c};white-space:nowrap;flex:0 0 auto`}));
+
+    const paletteAll = [
+      {cat:'Waiting', label:'Claude Code · approve sqlx migrate run', key:'⌘⇧A', c:T.amber},
+      {cat:'Thread', label:'Gemini CLI · regenerate OpenAPI spec', key:'', c:T.teal},
+      {cat:'Block', label:'cargo test auth::token · exit 101', key:'', c:T.red},
+      {cat:'File', label:'crates/auth/src/token.rs', key:'', c:T.muted},
+      {cat:'Git', label:'Commit 2 staged files', key:'⌘↵', c:T.muted},
+      {cat:'Host', label:'ssh staging-eu1 · 32ms', key:'', c:T.muted},
+      {cat:'Action', label:'Split pane vertically', key:'⌘D', c:T.muted},
+      {cat:'Action', label:'Toggle thread drawer', key:'⌘B', c:T.muted},
+      {cat:'Workflow', label:'Run migration + tests (parameterized)', key:'', c:T.muted},
+      {cat:'Setting', label:'Terminal font · JetBrains Mono 13', key:'', c:T.muted}
+    ];
+    const q = s.q.trim().toLowerCase();
+    const filtered = q ? paletteAll.filter(p => (p.label + ' ' + p.cat).toLowerCase().includes(q)) : paletteAll;
+    const paletteResults = filtered.map((p, i) => ({
+      cat:p.cat, label:p.label, key:p.key,
+      style:`display:flex;align-items:center;gap:10px;padding:7px 13px;font-size:12.5px;color:${T.ink};background:${i === 0 ? '#232624' : 'transparent'};cursor:pointer;min-width:0`,
+      catStyle:`font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.04em;color:${p.c};flex:0 0 62px`
+    }));
+
+    const modeDefs = [
+      {id:'plan', label:'Plan first', hint:'Claude proposes, nothing runs until you approve', c:T.amber},
+      {id:'ask', label:'Ask each edit', hint:'Every file write and command asks first', c:T.teal},
+      {id:'auto', label:'Auto-accept edits', hint:'File edits apply automatically; commands still ask', c:T.green},
+      {id:'bypass', label:'Bypass permissions', hint:'No prompts. Only inside a sandbox or throwaway worktree', c:T.red}
+    ];
+    const activeMode = modeDefs.find(m => m.id === s.mode) || modeDefs[0];
+    const modeOpts = modeDefs.map(m => ({
+      label:m.label, hint:m.hint,
+      style:`display:flex;flex-direction:column;gap:2px;align-items:flex-start;padding:7px 10px;border:1px solid ${s.mode === m.id ? m.c : '#232624'};border-radius:6px;background:${s.mode === m.id ? '#1B1D1C' : 'transparent'};color:${s.mode === m.id ? T.ink : T.muted};font:inherit;cursor:pointer;text-align:left;min-width:0;flex:1 1 150px`,
+      hintStyle:`font-size:10.5px;color:${s.mode === m.id ? '#AEB5B1' : T.dim};line-height:1.4;text-wrap:pretty`,
+      go:() => this.setState({mode:m.id})
+    }));
+
+    const stColorMap = {done:T.green, running:T.teal, pending:T.dim};
+    const planSteps = s.plan.map((p, i) => {
+      const on = s.planSel === p.id;
+      return {
+        title:p.title, num:String(i + 1).padStart(2, '0'), state:p.state,
+        style:`display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-bottom:1px solid #1B1D1C;background:${on ? '#1B1D1C' : 'transparent'};border-left:2px solid ${on ? T.teal : 'transparent'};cursor:grab;min-width:0;opacity:${p.include ? 1 : 0.45}`,
+        numStyle:`font-family:'JetBrains Mono',monospace;font-size:10.5px;color:${T.dim};flex:0 0 16px;padding-top:3px`,
+        dotStyle:`width:7px;height:7px;border-radius:50%;background:${stColorMap[p.state]};flex:0 0 7px;margin-top:5px`,
+        inputStyle:`width:100%;background:transparent;border:none;outline:none;color:${p.include ? T.ink : T.muted};font:inherit;font-size:12.5px;padding:0;text-decoration:${p.include ? 'none' : 'line-through'}`,
+        targetStyle:`display:inline-flex;align-items:center;height:17px;padding:0 6px;border:1px solid #232624;border-radius:3px;font-family:'JetBrains Mono',monospace;font-size:10px;color:${T.muted};white-space:nowrap`,
+        targets:p.targets,
+        skipStyle:`flex:0 0 auto;background:transparent;border:none;color:${p.include ? T.dim : T.teal};font:inherit;font-size:10.5px;cursor:pointer;white-space:nowrap`,
+        skipLabel:p.include ? 'skip' : 'include',
+        onSkip:(e) => { e.stopPropagation(); const plan = s.plan.map(x => x.id === p.id ? {...x, include: !x.include} : x); this.setState({plan, planEdits: s.planEdits + 1}); },
+        onText:(e) => { const v = e.target.value; const plan = s.plan.map(x => x.id === p.id ? {...x, title:v} : x); this.setState({plan, planEdits: s.planEdits + 1}); },
+        go:() => this.setState({planSel:p.id}),
+        onDragStart:() => this.setState({dragStep:p.id}),
+        onDragEnd:() => this.setState({dragStep:null}),
+        allowDrop:(e) => e.preventDefault(),
+        onDrop:(e) => {
+          e.preventDefault();
+          if (!s.dragStep || s.dragStep === p.id) return;
+          const plan = s.plan.filter(x => x.id !== s.dragStep);
+          const moved = s.plan.find(x => x.id === s.dragStep);
+          plan.splice(plan.findIndex(x => x.id === p.id), 0, moved);
+          this.setState({plan, dragStep:null, planEdits: s.planEdits + 1});
+        }
+      };
+    });
+    const selStep = s.plan.find(p => p.id === s.planSel) || s.plan[0];
+    const planActive = s.plan.filter(p => p.include).length;
+
+    const profileDefs = [
+      {id:'claude-work', name:'claude-work', cmd:'claude --profile work', kind:'Claude Code',
+       detail:'~/.config/claude-work · liv@ledger.io · Team plan', model:'sonnet-4.6', mcp:'postgres, github', c:T.teal},
+      {id:'claude-personal', name:'claude-personal', cmd:'claude --profile personal', kind:'Claude Code',
+       detail:'~/.claude · liv@fastmail.com · Pro plan', model:'opus-4.6', mcp:'none', c:T.teal},
+      {id:'codex', name:'codex', cmd:'codex', kind:'Codex CLI',
+       detail:'~/.codex · liv@ledger.io · API key', model:'gpt-5-codex', mcp:'github', c:T.muted},
+      {id:'gemini', name:'gemini', cmd:'gemini', kind:'Gemini CLI',
+       detail:'~/.gemini · oauth · tier 2 adapter', model:'gemini-3-pro', mcp:'none', c:T.muted}
+    ];
+    const activeProfile = profileDefs.find(p => p.id === s.profile) || profileDefs[0];
+    const profiles = profileDefs.map(p => ({
+      name:p.name, cmd:p.cmd, kind:p.kind, detail:p.detail, model:p.model, mcp:p.mcp,
+      style:`display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border:none;border-left:2px solid ${p.id === s.profile ? T.teal : 'transparent'};background:${p.id === s.profile ? '#1B1D1C' : 'transparent'};color:${T.ink};font:inherit;cursor:pointer;text-align:left;min-width:0`,
+      dot:`width:6px;height:6px;border-radius:50%;background:${p.c};flex:0 0 6px`,
+      checkStyle:`flex:0 0 auto;font-family:'JetBrains Mono',monospace;font-size:11px;color:${p.id === s.profile ? T.teal : 'transparent'}`,
+      go:() => this.setState({profile:p.id, profileMenu:false})
+    }));
+
+    const setTabs = [['shell','Shell'],['appearance','Appearance'],['themes','Themes'],['agents','Agents & profiles'],['system','macOS'],['keys','Keys']].map(([id, label]) => ({
+      label, style:this.minitab(s.setTab === id), go:() => this.setState({setTab:id})
+    }));
+
+    const shells = [
+      {id:'zsh', name:'zsh 5.9', path:'/bin/zsh', note:'Oh My Zsh · powerlevel10k · 12 plugins'},
+      {id:'bash', name:'bash 5.2', path:'/opt/homebrew/bin/bash', note:'bash-preexec detected'},
+      {id:'fish', name:'fish 3.7', path:'/opt/homebrew/bin/fish', note:'Starship prompt'},
+      {id:'pwsh', name:'PowerShell 7.4', path:'/usr/local/bin/pwsh', note:'oh-my-posh'}
+    ].map(sh => ({
+      name:sh.name, path:sh.path, note:sh.note,
+      style:`display:flex;align-items:center;gap:11px;width:100%;padding:9px 12px;border:none;border-bottom:1px solid #1B1D1C;background:${s.shell === sh.id ? '#1B1D1C' : 'transparent'};color:${T.ink};font:inherit;cursor:pointer;text-align:left;min-width:0`,
+      radio:`width:11px;height:11px;border-radius:50%;border:1.5px solid ${s.shell === sh.id ? T.teal : T.line};background:${s.shell === sh.id ? T.teal : 'transparent'};flex:0 0 11px`,
+      go:() => this.setState({shell:sh.id})
+    }));
+
+    const integrationRows = [
+      {label:'Prompt frameworks', value:'Oh My Zsh, powerlevel10k, Starship and oh-my-posh render unchanged'},
+      {label:'Block boundaries', value:'OSC 133 markers appended to your rc file — one line, removable'},
+      {label:'Reported to Tervin', value:'command, exit code, duration, cwd, host, Git branch'},
+      {label:'Without integration', value:'Tervin still works; Blocks fall back to heuristic prompt detection'},
+      {label:'Nerd Font glyphs', value:'JetBrainsMono Nerd Font detected — powerline segments render correctly'}
+    ];
+
+    const themeDefs = [
+      ['Tervin Dark', '#141514', '#1B1D1C', '#E5E8E5', '#68AEA5'],
+      ['Tervin Light', '#F4F5F3', '#E8EAE7', '#1B1D1C', '#3F8B82'],
+      ['Graphite', '#17181A', '#202225', '#DEE1E4', '#7FA8C9'],
+      ['Seam', '#101413', '#18201E', '#DCE7E3', '#5FBFAE'],
+      ['Ash', '#1A1A18', '#232320', '#E6E4DD', '#B9A88A'],
+      ['Basalt', '#0F1112', '#171A1C', '#D8DEE2', '#6F8FA6'],
+      ['Moss', '#131714', '#1A211B', '#DDE6DC', '#89B87C'],
+      ['Clay', '#181513', '#211D19', '#E8E0D6', '#C88F6A'],
+      ['Ember', '#161213', '#1F1A1B', '#EDE2E2', '#C97B7B'],
+      ['Fog', '#1B1E20', '#252A2C', '#DFE5E7', '#93A7AE'],
+      ['Ink', '#0D0E10', '#151719', '#D5D8DD', '#8189C4'],
+      ['Sand', '#F6F3EC', '#EAE5DA', '#23211C', '#8A7A55'],
+      ['Paper', '#FBFAF7', '#F0EEE9', '#1C1D1B', '#4A7C73'],
+      ['Slate Light', '#F2F4F6', '#E4E8EC', '#1A1F24', '#4C7A99'],
+      ['High Contrast', '#000000', '#0D0D0D', '#FFFFFF', '#4FD1C0']
+    ];
+    const themes = themeDefs.map(([name, bg, panel, ink, accent]) => ({
+      name, kind: bg > '#8' ? 'light' : 'dark',
+      style:`display:flex;flex-direction:column;gap:0;border:1px solid ${s.theme === name ? T.teal : '#232624'};border-radius:6px;overflow:hidden;cursor:pointer;background:transparent`,
+      swatchStyle:`height:46px;display:flex;background:${bg}`,
+      barStyle:`width:34%;background:${panel}`,
+      inkStyle:`align-self:center;margin-left:9px;width:26px;height:3px;border-radius:2px;background:${ink}`,
+      accentStyle:`align-self:center;margin-left:7px;width:10px;height:10px;border-radius:2px;background:${accent}`,
+      labelStyle:`display:flex;align-items:center;gap:7px;padding:6px 9px;border-top:1px solid #232624;font-size:11.5px;color:${s.theme === name ? T.ink : '#AEB5B1'};min-width:0`,
+      checkStyle:`margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:${s.theme === name ? T.teal : 'transparent'};flex:0 0 auto`,
+      go:() => this.setState({theme:name})
+    }));
+
+    const fonts = ['JetBrains Mono','Berkeley Mono','Iosevka','Maple Mono','SF Mono'].map(f => ({
+      label:f, style:this.pill(s.font === f), go:() => this.setState({font:f})
+    }));
+    const sizes = [11, 12, 13, 14, 16].map(n => ({
+      label:String(n), style:this.pill(s.fontSize === n), go:() => this.setState({fontSize:n})
+    }));
+    const cursors = ['block','beam','underline'].map(c => ({
+      label:c, style:this.pill(s.cursor === c), go:() => this.setState({cursor:c})
+    }));
+    const ligatureOpts = [['on', true], ['off', false]].map(([label, v]) => ({
+      label, style:this.pill(s.ligatures === v), go:() => this.setState({ligatures:v})
+    }));
+    const previewStyle = `font-family:'${s.font}','JetBrains Mono',monospace;font-size:${s.fontSize}px;line-height:1.6;font-variant-ligatures:${s.ligatures ? 'contextual' : 'none'};color:#AEB5B1;white-space:pre-wrap;padding:11px 13px;background:#141514;border:1px solid #232624;border-radius:6px;min-width:0;overflow:auto`;
+    const previewText = "❯ cargo test auth::token\n  ── 24 tests · 23 passed · 1 failed  =>  !=  ->\n❯ " + activeProfile.cmd + " \"fix the expired-grant path\"";
+
+    const macGroups = [
+      {title:'Notification Center', rows:[
+        {label:'Agent needs approval', value:'Banner with Approve / Deny / Open thread — actionable without focusing Tervin', on:true},
+        {label:'Thread finished or failed', value:'Grouped per thread, summary in the notification body', on:true},
+        {label:'Long command completed', value:'Only when Tervin is in the background and the command ran over 30s', on:true},
+        {label:'Time Sensitive for permissions', value:'Permission requests break through Focus; everything else stays quiet', on:true},
+        {label:'Focus filter', value:'Tervin registers a Focus filter — Do Not Disturb holds non-urgent alerts', on:false}
+      ]},
+      {title:'Dock and menu bar', rows:[
+        {label:'Dock badge', value:'Number of agents waiting on you', on:true},
+        {label:'Dock progress', value:'Progress bar during builds, tests and long agent runs', on:true},
+        {label:'Menu bar extra', value:'Compact Deck — approve or stop a thread without switching apps', on:true},
+        {label:'Dock menu', value:'Recent projects, new tab, new agent profile', on:true}
+      ]},
+      {title:'Security and system', rows:[
+        {label:'Keychain', value:'SSH passphrases, tokens and agent credentials stored in the system Keychain', on:true},
+        {label:'Touch ID', value:'Require Touch ID for high-risk approvals (sudo, production, destructive SQL)', on:true},
+        {label:'Secure Input awareness', value:'Tervin pauses scrollback capture while a password field is active', on:true},
+        {label:'Screen Time and Sleep', value:'Long agent runs hold system sleep until finished', on:false}
+      ]},
+      {title:'System conventions', rows:[
+        {label:'Follow system appearance', value:'Light and dark theme switch with macOS, accent colour respected', on:true},
+        {label:'Native tabs, Split View, Stage Manager', value:'Tervin windows behave like standard AppKit windows', on:true},
+        {label:'Services and Finder', value:'“Open in Tervin” in the Finder context menu and Services menu', on:true},
+        {label:'Shortcuts.app and URL scheme', value:'Run saved workflows from Shortcuts; tervin:// links open a project or thread', on:true},
+        {label:'Spotlight and Quick Look', value:'Exported Blocks and diffs are indexed and Quick Look-able', on:false},
+        {label:'VoiceOver and Reduce Motion', value:'Full accessibility semantics; motion respects system settings', on:true}
+      ]}
+    ].map(g => ({
+      title:g.title,
+      rows:g.rows.map(r => ({
+        label:r.label, value:r.value,
+        toggleStyle:`width:30px;height:17px;border-radius:9px;background:${r.on ? T.teal : '#2A2E2C'};position:relative;flex:0 0 30px`,
+        knobStyle:`position:absolute;top:2px;left:${r.on ? 15 : 2}px;width:13px;height:13px;border-radius:50%;background:${r.on ? '#141514' : '#6C736F'}`
+      }))
+    }));
+
+    const keyRows = [
+      {k:'⌘K', v:'Command palette and universal search'},
+      {k:'⌘B', v:'Thread drawer'},
+      {k:'⌘⇧P', v:'Switch agent profile'},
+      {k:'⌘D / ⌘⇧D', v:'Split pane vertically / horizontally'},
+      {k:'⌘⇧A', v:'Approve pending permission request'},
+      {k:'⌥↑ / ⌥↓', v:'Previous / next Block'},
+      {k:'⌘.', v:'Stop the focused thread'}
+    ];
+
+    return {
+      modeOpts, modeLabel: activeMode.label, modeHint: activeMode.hint,
+      modeChipStyle: `display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border:1px solid ${activeMode.c};border-radius:5px;color:${activeMode.c};font-size:11.5px;white-space:nowrap;flex:0 0 auto`,
+      planSteps, planActive: planActive + ' of ' + s.plan.length + ' steps active',
+      planRevLabel: 'revision ' + s.planRev,
+      planEditCount: s.planEdits, hasPlanEdits: s.planEdits > 0,
+      planEditLabel: 'Send ' + s.planEdits + ' change' + (s.planEdits === 1 ? '' : 's') + ' to Claude',
+      sendPlanEdits: () => this.setState({planEdits:0, planRev: s.planRev + 1}),
+      addStep: () => {
+        const id = 'p' + s.planNext;
+        this.setState({plan:[...s.plan, {id, title:'New step', detail:'Describe what Claude should do.', targets:[], state:'pending', include:true}], planSel:id, planNext:s.planNext + 1, planEdits:s.planEdits + 1});
+      },
+      selTitle: selStep.title, selDetail: selStep.detail, selState: selStep.state,
+      selStateStyle: this.chip(stColorMap[selStep.state]),
+      isPlan: s.surface === 'plan',
+      macGroups,
+      profiles, activeProfileName: activeProfile.name, activeProfileCmd: activeProfile.cmd,
+      profileMenuOpen: s.profileMenu,
+      toggleProfileMenu: () => this.setState(x => ({profileMenu: !x.profileMenu})),
+      closeProfileMenu: () => this.setState({profileMenu:false}),
+      setTabs, shells, integrationRows, themes, fonts, sizes, cursors, ligatureOpts,
+      previewStyle, previewText, keyRows,
+      isSettings: s.surface === 'settings',
+      showShell: s.setTab === 'shell', showAppearance: s.setTab === 'appearance',
+      showThemes: s.setTab === 'themes', showAgents: s.setTab === 'agents',
+      showSystem: s.setTab === 'system', showKeys: s.setTab === 'keys',
+      openSettings: () => this.setState({surface:'settings'}),
+      settingsBtnStyle: `height:26px;padding:0 9px;background:transparent;border:1px solid ${s.surface === 'settings' ? T.line : '#232624'};border-radius:5px;color:${s.surface === 'settings' ? T.ink : T.muted};font:inherit;font-size:11.5px;cursor:pointer;white-space:nowrap;flex:0 0 auto`,
+      termPanes, dropSplitStyle, splitActive: () => this.splitActive(),
+      allowDrop: (e) => e.preventDefault(),
+      onDropSplit: (e) => { e.preventDefault(); if (s.dragTab) this.moveTab(s.dragTab, 1, 0); },
+      dragging: !!s.dragTab,
+      drawerStyle: `position:absolute;top:0;right:0;bottom:0;width:${s.drawerW}px;max-width:80%;background:#171918;border-left:1px solid #323634;display:flex;box-shadow:-14px 0 34px rgba(0,0,0,0.35);z-index:20`,
+      drawerHandleStyle: this.handle('x','drawerW',280,660,true).style,
+      onDrawerResize: this.handle('x','drawerW',280,660,true).onDown,
+      agentsLeftStyle: `width:${s.agentsW}px;flex:0 0 ${s.agentsW}px;min-width:0;display:flex;flex-direction:column`,
+      agentsHandleStyle: this.handle('x','agentsW',300,Math.max(340, s.vw - 380)).style,
+      onAgentsResize: this.handle('x','agentsW',300,Math.max(340, s.vw - 380)).onDown,
+      reviewLeftStyle: `width:${s.reviewLeftW}px;flex:0 0 ${s.reviewLeftW}px;min-width:0;display:flex;flex-direction:column`,
+      reviewLeftHandleStyle: this.handle('x','reviewLeftW',170,440).style,
+      onReviewLeftResize: this.handle('x','reviewLeftW',170,440).onDown,
+      reviewBottomStyle: `height:${s.reviewBottomH}px;flex:0 0 ${s.reviewBottomH}px;overflow:auto;padding:6px 14px 12px`,
+      reviewBottomHandleStyle: this.handle('y','reviewBottomH',80,460,true).style,
+      onReviewBottomResize: this.handle('y','reviewBottomH',80,460,true).onDown,
+      surfaces, blocks, threads, selected, timeline, leftTabs, leftList, diff,
+      bottomTabs, bottomText, diagList, bridge, setup, paletteResults,
+      showDiagList: s.bottom === 'diagnostics', showBottomText: s.bottom !== 'diagnostics',
+      paletteEmpty: filtered.length === 0, query: s.q, wide,
+      isTerminal: s.surface === 'terminal', isAgents: s.surface === 'agents', isReview: s.surface === 'review',
+      openSurfacePlan: () => this.setState({surface:'plan'}),
+      barBtnStyle: s.vw < 1180 ? 'display:none' : "display:flex;align-items:center;gap:7px;height:26px;padding:0 9px;background:transparent;border:1px solid #232624;border-radius:5px;color:#909894;font:inherit;font-size:11.5px;cursor:pointer;white-space:nowrap;flex:0 0 auto",
+      settingsBtnStyle2: s.vw < 1180 ? 'display:none' : `height:26px;padding:0 9px;background:transparent;border:1px solid ${s.surface === 'settings' ? T.line : '#232624'};border-radius:5px;color:${s.surface === 'settings' ? T.ink : T.muted};font:inherit;font-size:11.5px;cursor:pointer;white-space:nowrap;flex:0 0 auto`,
+      moreBtnStyle: s.vw < 1180 ? 'width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid #232624;border-radius:5px;color:#909894;font:inherit;font-size:13px;cursor:pointer;flex:0 0 26px' : 'display:none',
+      moreOpen: s.more,
+      toggleMore: () => this.setState(x => ({more: !x.more})),
+      moreItems: [
+        {label:'Search — ⌘K', go:() => this.setState({more:false, palette:true, q:''})},
+        {label:'Bridge', go:() => this.setState({more:false, bridge:true})},
+        {label:'Settings', go:() => this.setState({more:false, surface:'settings'})}
+      ].map(m => ({label:m.label, go:m.go, style:'display:flex;align-items:center;width:100%;padding:8px 12px;background:transparent;border:none;border-bottom:1px solid #232624;color:#E5E8E5;font:inherit;font-size:12.5px;cursor:pointer;text-align:left;white-space:nowrap'})),
+      planEditStyle: s.planEdits > 0
+        ? 'flex:0 0 auto;white-space:nowrap;height:28px;padding:0 11px;border:1px solid #68AEA5;border-radius:5px;background:transparent;color:#E5E8E5;font:inherit;font-size:12.5px;cursor:pointer'
+        : 'display:none',
+      drawerOpen: s.drawer && s.surface === 'terminal',
+      drawerLabel: s.drawer ? 'Hide thread' : 'Thread',
+      waitingStyle: `flex:0 0 auto;white-space:nowrap;display:flex;align-items:center;height:26px;padding:0 10px;border:1px solid ${T.amber};border-radius:5px;background:transparent;color:${T.amber};font:inherit;font-size:11.5px;cursor:pointer`,
+      paletteOpen: s.palette, approvalOpen: s.approval, bridgeOpen: s.bridge, onboardingOpen: s.onboarding,
+      openPalette: () => this.setState({palette:true, q:''}),
+      openApproval: () => this.setState({approval:true}),
+      openBridge: () => this.setState({bridge:true}),
+      closeAll: () => this.setState({palette:false, approval:false, bridge:false}),
+      stop: (e) => e.stopPropagation(),
+      setQuery: (e) => this.setState({q:e.target.value}),
+      toggleDrawer: () => this.setState(x => ({drawer: !x.drawer, surface:'terminal'})),
+      closeDrawer: () => this.setState({drawer:false}),
+      hideOnboarding: () => this.setState({onboarding:false}),
+      fromOpts, imports, levelOpts,
+      obStep1: s.obStep === 1, obStep2: s.obStep === 2, obStep3: s.obStep === 3,
+      obTitle: obTitles[s.obStep].t, obSub: obTitles[s.obStep].s,
+      obStepLabel: 'Step ' + s.obStep + ' of 3',
+      obNext: () => this.setState({obStep: Math.min(3, s.obStep + 1)}),
+      obBack: () => this.setState({obStep: Math.max(1, s.obStep - 1)}),
+      obBackStyle: `flex:0 0 auto;white-space:nowrap;height:32px;padding:0 12px;border:1px solid #323634;border-radius:6px;background:transparent;color:#AEB5B1;font:inherit;font-size:13px;cursor:pointer;visibility:${s.obStep === 1 ? 'hidden' : 'visible'}`,
+      obNextLabel: s.obStep === 3 ? 'Open my project' : 'Continue',
+      obPrimary: () => s.obStep === 3 ? this.setState({onboarding:false}) : this.setState({obStep: s.obStep + 1}),
+      notifOpen: s.notif,
+      showNotif: () => this.setState({notif:true}),
+      hideNotif: () => this.setState({notif:false}),
+      levelLabel: s.level === 'guided' ? 'Guided' : s.level === 'expert' ? 'Expert' : 'Standard'
+    };
+  }
+}
+</script>
+</body>
+</html>

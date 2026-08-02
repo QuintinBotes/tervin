@@ -1,0 +1,763 @@
+/**
+ * Tervin Thread: timeline plus composer.
+ *
+ * Two things here are load-bearing rather than cosmetic.
+ *
+ * **Capability-aware controls.** Plan mode, model choice, and resume appear only
+ * when the running adapter actually supports them, and a partially-supported
+ * capability shows its caveat. Nothing is faked into place.
+ *
+ * **Honest permission status.** The composer states who decides about actions —
+ * Tervin Rules or the provider's own system — because a user glancing at this
+ * panel must not conclude Tervin is gating actions when it is only observing.
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as api from "../lib/api";
+import { describeError, useWorkspace, type ThreadView } from "../lib/store";
+import {
+  applyEmacs,
+  applyVimNormal,
+  isSubmit,
+  type EditResult,
+  type VimMode,
+} from "../lib/editing";
+import { toneForState } from "../App";
+import { PathComplete } from "./PathComplete";
+
+export function ThreadPanel() {
+  const s = useWorkspace();
+  const thread = s.activeThreadId ? s.threads[s.activeThreadId] : null;
+  const [prompt, setPrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [showReasoning, setShowReasoning] = useState(false);
+  const editMode = s.appearance.composerMode;
+  const [vimMode, setVimMode] = useState<VimMode>("insert");
+  // Refs rather than state: neither should cause a re-render, and both must be current
+  // inside the keydown handler without rebuilding it.
+  const killRing = useRef("");
+  const pendingOp = useRef("");
+
+  // A mode change resets vim to insert. Landing in normal mode in a box you just
+  // switched on would look like a broken text field.
+  useEffect(() => {
+    setVimMode("insert");
+    pendingOp.current = "";
+  }, [editMode]);
+  const endRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // `@path` completion state.
+  //
+  // The selected index lives here rather than in the picker so the textarea keeps
+  // focus: moving focus into a dropdown mid-sentence loses the caret.
+  const [pathQuery, setPathQuery] = useState<{ at: number; query: string } | null>(null);
+  const [pathSelected, setPathSelected] = useState(0);
+  const [pathCount, setPathCount] = useState(0);
+
+  /** Re-evaluate whether the caret sits inside an `@path` reference. */
+  const syncPathQuery = useCallback((value: string, cursor: number) => {
+    const found = api.atPathQuery(value, cursor);
+    setPathQuery(found);
+    setPathSelected(0);
+  }, []);
+
+  /** Replace the `@…` span with the chosen path. */
+  const acceptPath = useCallback(
+    (path: string) => {
+      if (!pathQuery) return;
+      const input = inputRef.current;
+      const cursor = input?.selectionStart ?? prompt.length;
+      const next = `${prompt.slice(0, pathQuery.at)}@${path} ${prompt.slice(cursor)}`;
+      setPrompt(next);
+      setPathQuery(null);
+      // Put the caret after the inserted path, not at the end of the whole prompt.
+      const caret = pathQuery.at + path.length + 2;
+      requestAnimationFrame(() => {
+        input?.focus();
+        input?.setSelectionRange(caret, caret);
+      });
+    },
+    [pathQuery, prompt],
+  );
+
+  const profiles = s.agents?.profiles ?? [];
+  const profile = profiles.find((p) => p.id === s.activeProfileId) ?? profiles[0];
+
+  // Poll live session facts while a Thread is working. Metadata such as cost and
+  // MCP state is push-free on the runtime side, so it is pulled at a low rate
+  // rather than on every event.
+  useEffect(() => {
+    if (!thread || !["starting", "understanding", "planning", "reading", "editing", "executing", "testing"].includes(thread.state))
+      return;
+    const id = setInterval(() => void s.refreshThreadInfo(thread.id), 1500);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread?.id, thread?.state]);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [thread?.events.length]);
+
+  // A prepared handoff lands in the composer, not on the wire. The user chooses the
+  // agent and can read — or edit — every word before it is shared.
+  useEffect(() => {
+    if (!s.pendingHandoff) return;
+    setPrompt(s.pendingHandoff);
+    s.setHandoff(null);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      // Caret at the start: the briefing is long, and the useful thing to read
+      // first is the task, not the omissions at the end.
+      inputRef.current?.setSelectionRange(0, 0);
+      inputRef.current?.scrollTo({ top: 0 });
+    });
+  }, [s.pendingHandoff, s]);
+
+  const visible = useMemo(() => {
+    if (!thread) return [];
+    return thread.events.filter((e) => {
+      if (e.payload.type === "runtime.unclassified") return false;
+      if (!showReasoning && e.payload.type === "agent.message" && e.payload.is_reasoning)
+        return false;
+      if (e.payload.type === "thread.state") return false;
+      return true;
+    });
+  }, [thread, showReasoning]);
+
+  async function send() {
+    const text = prompt.trim();
+    if (!text || busy) return;
+    setBusy(true);
+    try {
+      // Anything staged from the terminal, plus every `@path` written in the
+      // prompt, travels as an explicit attachment — nothing implicit is sent.
+      const referenced = [...text.matchAll(/(?:^|\s)@([^\s]+)/g)].map((m) => m[1]!);
+      const attachments = [
+        ...s.stagedAttachments,
+        ...referenced.map((path) => ({ kind: "file", path })),
+      ];
+
+      if (thread && thread.info?.running) {
+        await api.threadSend(thread.id, text, attachments);
+        s.clearAttachments();
+      } else {
+        const started = await api.threadStart({
+          profile_id: profile?.id ?? null,
+          prompt: text,
+          attachments,
+          task_title: text.slice(0, 80),
+        });
+        s.clearAttachments();
+        s.upsertThread({
+          id: started.thread_id,
+          profileId: started.profile_id,
+          runtimeId: started.runtime_id,
+          title: text.slice(0, 80),
+          state: "starting",
+          events: [],
+          capabilities: started.capabilities,
+          permissions: started.permissions,
+          info: null,
+        });
+        s.setActiveThread(started.thread_id);
+        void s.refreshThreadInfo(started.thread_id);
+      }
+      setPrompt("");
+    } catch (e) {
+      s.pushNotice(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const caps = thread?.capabilities;
+  const perms = thread?.permissions;
+
+  return (
+    // `width: 100%` and `minWidth: 0` are load-bearing: this renders as a flex item,
+    // and a flex item with no width sizes to its content — which left the right-hand
+    // half of the surface empty.
+    <div className="col" style={{ height: "100%", minHeight: 0, width: "100%", minWidth: 0 }}>
+      {/* Header: who is working, and in what state. */}
+      <div
+        className="row"
+        style={{
+          padding: "var(--sp-2) var(--sp-3)",
+          borderBottom: "1px solid var(--tervin-line)",
+          flex: "none",
+          gap: "var(--sp-2)",
+        }}
+      >
+        {thread ? (
+          <>
+            <span className={`dot dot-${toneForState(thread.state)}`} />
+            <span className="truncate grow" title={thread.title}>{thread.title}</span>
+            <span className={`meta tone-${toneForState(thread.state)}`}>
+              {thread.state.replace(/_/g, " ")}
+            </span>
+            {thread.info?.running && (
+              <button
+                className="btn btn-danger"
+                onClick={() => void api.threadInterrupt(thread.id).catch(() => {})}
+                title="Stop this Thread"
+              >
+                Stop
+              </button>
+            )}
+            <HandoffButton threadId={thread.id} />
+          </>
+        ) : (
+          <span className="meta">No Thread running</span>
+        )}
+      </div>
+
+      {/* Timeline. */}
+      <div className="grow" style={{ overflow: "auto", minHeight: 0, padding: "var(--sp-2)" }}>
+        {!thread ? (
+          <div className="empty">
+            Start a Thread by describing a task below. Tervin shows the plan, the
+            files read and changed, every command run, and the test results — and
+            says plainly who is deciding about each action.
+          </div>
+        ) : (
+          <>
+            {visible.map((event) => (
+              <TimelineRow key={event.id} event={event} />
+            ))}
+            <div ref={endRef} />
+          </>
+        )}
+      </div>
+
+      {/* Capability and permission disclosure. */}
+      {thread && (caps || perms) && (
+        <div
+          style={{
+            borderTop: "1px solid var(--tervin-line)",
+            padding: "var(--sp-2) var(--sp-3)",
+            flex: "none",
+          }}
+        >
+          {perms && (
+            <div className="meta row" style={{ gap: "var(--sp-2)", alignItems: "flex-start" }}>
+              <span
+                className={`dot ${perms.tervin_can_intercept ? "dot-teal" : "dot-amber"}`}
+                style={{ marginTop: 5 }}
+              />
+              <span className="selectable">
+                <strong>{perms.tervin_can_intercept ? "Tervin Rules gate this Thread" : "Provider-native approvals"}</strong>
+                {" — "}
+                {perms.explanation}
+              </span>
+            </div>
+          )}
+          {caps && <CapabilityStrip caps={caps} />}
+          <HookRuns runs={thread.info?.metadata.hook_runs ?? []} />
+        </div>
+      )}
+
+      {/* Composer. */}
+      <div
+        style={{
+          borderTop: "1px solid var(--tervin-line)",
+          padding: "var(--sp-2)",
+          flex: "none",
+          background: "var(--tervin-panel)",
+        }}
+      >
+        <div className="row" style={{ marginBottom: "var(--sp-2)", gap: "var(--sp-2)", flexWrap: "wrap" }}>
+          {/* Agent profile picker: this is how multiple accounts are switched. */}
+          <select
+            value={profile?.id ?? ""}
+            onChange={(e) => s.setActiveProfile(e.target.value)}
+            aria-label="Agent profile"
+            title="Which agent and account to use"
+          >
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+
+          {profile?.sensitive && (
+            <span className="chip tone-amber" title="This profile uses a work or shared account">
+              {profile.badge ?? "shared"} account
+            </span>
+          )}
+
+          {/* Modes as the running session reported them. Never a hard-coded list:
+              Claude Code offers four, an ACP agent offers whatever it defines, and
+              a control offering a mode the agent would reject is worse than none. */}
+          {thread && <ModePicker thread={thread} />}
+
+          {/* Only shown in vim mode, and only because the mode changes what every
+              keystroke means — an invisible modal state is the one thing worse than
+              no modal editing. */}
+          {editMode === "vim" && (
+            <span
+              className={`chip ${vimMode === "normal" ? "chip-amber" : ""}`}
+              title="Escape for normal mode, i to insert"
+            >
+              {vimMode === "normal" ? "NORMAL" : "INSERT"}
+            </span>
+          )}
+
+          <button
+            className="btn btn-ghost"
+            onClick={() => setShowReasoning((v) => !v)}
+            title="Reasoning is kept collapsed by default"
+          >
+            {showReasoning ? "Hide reasoning" : "Show reasoning"}
+          </button>
+        </div>
+
+        <div style={{ position: "relative" }}>
+          {/* The picker sits above the composer so it never covers what is typed. */}
+          {pathQuery && (
+            <div
+              style={{
+                position: "absolute",
+                bottom: "calc(100% + var(--sp-2))",
+                left: 0,
+                right: 0,
+                zIndex: 40,
+              }}
+            >
+              <PathComplete
+                query={pathQuery.query}
+                relativeTo={null}
+                selected={pathSelected}
+                onCount={setPathCount}
+                onAccept={acceptPath}
+              />
+            </div>
+          )}
+
+          <textarea
+            ref={inputRef}
+            value={prompt}
+            onChange={(e) => {
+              setPrompt(e.target.value);
+              syncPathQuery(e.target.value, e.target.selectionStart ?? 0);
+            }}
+            onClick={(e) =>
+              syncPathQuery(
+                e.currentTarget.value,
+                e.currentTarget.selectionStart ?? 0,
+              )
+            }
+            onBlur={() => setPathQuery(null)}
+            onKeyDown={(e) => {
+              // While the picker is open it owns the arrows, Tab, and Enter — but
+              // only Enter, so Shift-Enter still inserts a newline.
+              if (pathQuery && pathCount > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setPathSelected((i) => Math.min(i + 1, pathCount - 1));
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setPathSelected((i) => Math.max(i - 1, 0));
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setPathQuery(null);
+                  return;
+                }
+                if (e.key === "Enter" && !e.shiftKey) {
+                  // Accepting a completion, not sending the prompt.
+                  e.preventDefault();
+                  const list = document.querySelectorAll<HTMLElement>(
+                    '[role="option"]',
+                  );
+                  list[pathSelected]?.dispatchEvent(
+                    new MouseEvent("mousedown", { bubbles: true }),
+                  );
+                  return;
+                }
+              }
+
+              const input = e.currentTarget;
+              const stroke = {
+                key: e.key,
+                ctrl: e.ctrlKey,
+                alt: e.altKey,
+                meta: e.metaKey,
+                shift: e.shiftKey,
+              };
+
+              // ⌘⏎ or ^⏎ sends. Plain Enter is a newline, because a prompt is usually
+              // several lines and a box where Enter submits makes writing one an
+              // exercise in not pressing it.
+              if (isSubmit(stroke)) {
+                e.preventDefault();
+                void send();
+                return;
+              }
+
+              if (editMode === "native") return;
+
+              const state = {
+                text: input.value,
+                start: input.selectionStart ?? 0,
+                end: input.selectionEnd ?? 0,
+              };
+
+              // Escape leaves vim's insert mode. It is claimed only in vim mode, so
+              // Escape still closes an overlay everywhere else.
+              if (editMode === "vim" && vimMode === "insert" && e.key === "Escape") {
+                e.preventDefault();
+                setVimMode("normal");
+                return;
+              }
+
+              // Branched explicitly rather than with a nested ternary: vim's result
+              // carries a pending operator that emacs's does not, and collapsing the
+              // two into one union only obscures that.
+              let result: EditResult = { handled: false, state };
+              if (editMode === "emacs") {
+                result = applyEmacs(state, stroke, killRing.current);
+              } else if (editMode === "vim" && vimMode === "normal") {
+                const vim = applyVimNormal(
+                  state,
+                  stroke,
+                  pendingOp.current,
+                  killRing.current,
+                );
+                pendingOp.current = vim.pending ?? "";
+                result = vim;
+              }
+
+              if (result.vimMode) setVimMode(result.vimMode);
+              if (result.yanked) killRing.current = result.yanked;
+
+              // Unhandled keys go to the platform untouched. Swallowing them is how an
+              // emulation breaks IME, dead keys, and accessibility.
+              if (!result.handled) return;
+              e.preventDefault();
+
+              if (result.state.text !== state.text) {
+                setPrompt(result.state.text);
+              }
+              // The caret is applied after React commits the value, or it would be
+              // clobbered by the re-render.
+              const { start, end } = result.state;
+              requestAnimationFrame(() => {
+                input.setSelectionRange(start, end);
+              });
+              syncPathQuery(result.state.text, start);
+            }}
+            placeholder={
+              thread?.info?.running
+                ? "Reply to the agent…  @ attaches a file"
+                : "Describe a task. @ attaches a file, ⌘⏎ sends."
+            }
+            rows={3}
+            style={{ width: "100%", resize: "vertical", fontFamily: "inherit" }}
+            aria-label="Prompt"
+          />
+        </div>
+
+        {s.stagedAttachments.length > 0 && (
+          <div
+            className="row"
+            style={{ marginTop: "var(--sp-2)", gap: "var(--sp-1)", flexWrap: "wrap" }}
+          >
+            {/* Shown before sending, because this is what will leave the machine. */}
+            {s.stagedAttachments.map((attachment, i) => (
+              <span key={i} className="chip chip-teal">
+                {describeAttachment(attachment)}
+              </span>
+            ))}
+            <button className="btn btn-xs" onClick={s.clearAttachments}>
+              Clear
+            </button>
+          </div>
+        )}
+
+        <div className="row" style={{ marginTop: "var(--sp-2)" }}>
+          <span className="meta grow">
+            {profile ? `${profile.name} · ${profile.runtime_id}` : "No agent profile configured"}
+          </span>
+          <button className="btn btn-primary" onClick={() => void send()} disabled={busy || !prompt.trim()}>
+            {busy ? "Working…" : thread?.info?.running ? "Send" : "Start Thread"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Capabilities as a compact strip, with reasons on hover for what is absent. */
+/**
+ * The mode control for a running Thread.
+ *
+ * Every option comes from the session itself. Nothing appears when a runtime
+ * reports no modes, because the alternative — showing a plausible list — produces a
+ * control that silently fails, and a mode is exactly the setting a user must be
+ * able to trust.
+ */
+function ModePicker({ thread }: { thread: ThreadView }) {
+  const s = useWorkspace();
+  const [busy, setBusy] = useState(false);
+  const modes = thread.info?.metadata.modes ?? [];
+  const current = thread.info?.metadata.permission_mode ?? thread.permissions?.mode ?? "";
+
+  if (modes.length === 0) return null;
+
+  async function choose(id: string) {
+    if (!id || id === current) return;
+    setBusy(true);
+    try {
+      await api.threadSetPermissionMode(thread.id, id);
+      await s.refreshThreadInfo(thread.id);
+    } catch (e) {
+      s.pushNotice(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const active = modes.find((m) => m.id === current);
+
+  return (
+    <select
+      value={modes.some((m) => m.id === current) ? current : ""}
+      disabled={busy || !thread.info?.running}
+      onChange={(e) => void choose(e.target.value)}
+      aria-label="Mode"
+      // The description says who decides, which is the only thing a mode name
+      // needs to convey.
+      title={active?.description ?? "How this agent handles permissions"}
+    >
+      {/* Shown only when the runtime reported a mode Tervin does not have an entry
+          for, so the control never silently misrepresents the current state. */}
+      {!modes.some((m) => m.id === current) && (
+        <option value="">{current || "Mode"}</option>
+      )}
+      {modes.map((m) => (
+        <option key={m.id} value={m.id}>
+          {m.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/**
+ * Hand this Thread's work to another agent.
+ *
+ * The payoff of a provider-neutral event stream: what Claude Code did can be handed to
+ * an ACP agent or a local model without either knowing the other exists. The briefing
+ * is loaded into the composer rather than sent, because the user picks who receives it
+ * — and should see what is being shared before it goes anywhere.
+ */
+function HandoffButton({ threadId }: { threadId: string }) {
+  const s = useWorkspace();
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <button
+      className="btn"
+      disabled={busy}
+      title="Summarise this Thread's work as a prompt for another agent"
+      onClick={() => {
+        setBusy(true);
+        void api
+          .threadHandoff(threadId)
+          .then((handoff) => {
+            s.setHandoff(handoff.prompt);
+            s.pushNotice(
+              `Handoff ready (${handoff.summary}). Pick an agent and send — nothing has been shared yet.`,
+            );
+          })
+          .catch((e) => s.pushNotice(describeError(e)))
+          .finally(() => setBusy(false));
+      }}
+    >
+      {busy ? "Preparing…" : "Hand off"}
+    </button>
+  );
+}
+
+/**
+ * The user's own hooks, as they actually ran.
+ *
+ * Hooks are the most invisible part of a Claude Code setup — they run silently, and
+ * a broken one degrades every session with no message anywhere. So a failure is
+ * shown by default and named; the working ones collapse into a count, because "four
+ * hooks ran fine" is reassurance, not information.
+ *
+ * Tervin's own gate is excluded: it reports itself in the timeline, and listing it
+ * here would present Tervin's work as the user's configuration.
+ */
+function HookRuns({ runs }: { runs: api.HookRun[] }) {
+  const theirs = runs.filter((r) => !r.is_tervin);
+  if (theirs.length === 0) return null;
+
+  const failed = theirs.filter((r) => r.exit_code !== 0 && r.exit_code !== 2);
+  const blocked = theirs.filter((r) => r.exit_code === 2);
+  const fine = theirs.length - failed.length - blocked.length;
+
+  return (
+    <div className="meta col" style={{ gap: 2, marginTop: "var(--sp-1)" }}>
+      {failed.map((run, i) => (
+        <div key={`${run.name}-${i}`} className="row" style={{ gap: "var(--sp-2)" }}>
+          <span className="dot dot-amber" />
+          <span className="mono">{run.name}</span>
+          <span className="tone-amber truncate grow" title={run.message ?? undefined}>
+            failed (exit {run.exit_code}){run.message ? ` — ${run.message}` : ""}
+          </span>
+        </div>
+      ))}
+      {(fine > 0 || blocked.length > 0) && (
+        <div className="tone-muted">
+          {fine > 0 && `${fine} of your hooks ran`}
+          {fine > 0 && blocked.length > 0 && " · "}
+          {blocked.length > 0 && `${blocked.length} blocked an action`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CapabilityStrip({ caps }: { caps: api.Capabilities }) {
+  const entries: [string, api.CapabilityLevel][] = [
+    ["Plan", caps.plan_mode],
+    ["Resume", caps.resume],
+    ["Tools", caps.tool_events],
+    ["Edits", caps.file_edits],
+    ["Gate", caps.native_permission_bridge],
+    ["MCP", caps.mcp],
+    ["Cost", caps.cost_reporting],
+  ];
+  return (
+    <div className="row" style={{ gap: "var(--sp-1)", flexWrap: "wrap", marginTop: "var(--sp-1)" }}>
+      {entries.map(([label, level]) => {
+        const note = "note" in level ? level.note : "reason" in level ? level.reason : undefined;
+        const usable = level.level === "supported" || level.level === "partial";
+        return (
+          <span
+            key={label}
+            className="chip"
+            title={note ?? `${label}: ${level.level}`}
+            style={{
+              opacity: usable ? 1 : 0.5,
+              borderColor: level.level === "supported" ? "var(--tervin-accent)" : undefined,
+              color: level.level === "supported" ? "var(--tervin-accent)" : undefined,
+              textDecoration: level.level === "unsupported" ? "line-through" : undefined,
+            }}
+          >
+            {label}
+            {level.level === "partial" && "*"}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function TimelineRow({ event }: { event: api.TervinEvent }) {
+  const [open, setOpen] = useState(false);
+  const kind = event.payload.type;
+  const risk = (event.payload as { risk?: api.RiskAssessment }).risk;
+
+  // A failure reason is the one payload that must be readable without being asked
+  // for: it is where the runtime says what to do next, and a summary line cannot
+  // hold it. Anything else stays collapsed.
+  const failure =
+    kind === "thread.failed"
+      ? ((event.payload as { reason?: string }).reason ?? "")
+      : "";
+  const detail = failure.includes("\n") ? failure.slice(failure.indexOf("\n")).trim() : "";
+
+  return (
+    <div
+      style={{
+        padding: "var(--sp-1) var(--sp-2)",
+        borderLeft: `2px solid ${borderForKind(kind)}`,
+        marginBottom: 2,
+      }}
+    >
+      <div className="row" style={{ gap: "var(--sp-2)", alignItems: "flex-start" }}>
+        <span className="meta tabular" style={{ flex: "none", width: 52 }}>
+          {new Date(event.ts).toLocaleTimeString([], { hour12: false })}
+        </span>
+        <span className="meta" style={{ flex: "none", width: 108 }} title={kind}>
+          {kind}
+        </span>
+        <span
+          className="grow selectable"
+          style={{ fontSize: "var(--text-meta)", wordBreak: "break-word" }}
+        >
+          {event.summary}
+        </span>
+        {risk && risk.level !== "low" && (
+          <button
+            className={`chip tone-${risk.level === "critical" ? "red" : "amber"}`}
+            onClick={() => setOpen((v) => !v)}
+            title="Why this was flagged"
+          >
+            {risk.level}
+            {!risk.enforceable && " · observed"}
+          </button>
+        )}
+      </div>
+
+      {detail && (
+        <div
+          className="meta selectable"
+          style={{
+            paddingLeft: 172,
+            marginTop: "var(--sp-1)",
+            whiteSpace: "pre-wrap",
+            textWrap: "pretty",
+          }}
+        >
+          {detail}
+        </div>
+      )}
+
+      {open && risk && (
+        <div className="meta selectable" style={{ paddingLeft: 172, marginTop: "var(--sp-1)" }}>
+          {risk.reasons.map((r) => (
+            <div key={r}>· {r}</div>
+          ))}
+          {risk.side_effects.map((r) => (
+            <div key={r} className="tone-muted">→ {r}</div>
+          ))}
+          {!risk.enforceable && (
+            <div className="tone-amber">
+              Tervin observed this action but could not prevent it.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A one-line label for a staged attachment. */
+function describeAttachment(attachment: Record<string, unknown>): string {
+  const kind = String(attachment.kind ?? "context");
+  if (kind === "file" || kind === "diff") return String(attachment.path ?? kind);
+  if (kind === "selection") {
+    const text = String(attachment.text ?? "");
+    return `selection · ${text.length} chars`;
+  }
+  if (kind === "block") return `block · ${String(attachment.command ?? "")}`;
+  return kind;
+}
+
+function borderForKind(kind: string): string {
+  if (kind.startsWith("permission")) return "var(--tervin-amber)";
+  if (kind === "thread.failed" || kind.includes("denied")) return "var(--tervin-red)";
+  if (kind === "thread.completed" || kind === "test.completed") return "var(--tervin-green)";
+  if (kind.startsWith("command") || kind.startsWith("patch") || kind.startsWith("plan"))
+    return "var(--tervin-accent)";
+  return "var(--tervin-line)";
+}

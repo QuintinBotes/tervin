@@ -1,0 +1,32 @@
+[package]
+name = "agent-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The AgentRuntime interface, capability model, runtime discovery, and per-agent adapters."
+
+[dependencies]
+tervin-core.workspace = true
+rules-engine.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+block-engine = { version = "0.1.0", path = "../block-engine" }
+toml = "1.1.4"
+shell-words.workspace = true
+dirs = "6.0.0"
+futures-util = { version = "0.3.33", default-features = false, features = ["std"] }
+# For OpenAI-compatible model endpoints. `rustls-tls` rather than the default so
+# there is no OpenSSL system dependency; remote endpoints still work over HTTPS.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2"] }
+
+[dev-dependencies]
+ctor = "1.0.12"
+tempfile = "3"
