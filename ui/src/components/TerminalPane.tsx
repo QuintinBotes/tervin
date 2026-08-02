@@ -18,7 +18,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Terminal, type ILink, type IViewportRange } from "@xterm/xterm";
+import { stickyCommandFor } from "../lib/sticky";
+import { Terminal, type ILink, type IMarker, type IViewportRange } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -201,6 +202,15 @@ export function TerminalPane({ paneId, active, onFocus }: Props) {
 
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [pasteConfirm, setPasteConfirm] = useState<PasteConfirm | null>(null);
+  /**
+   * The command whose output fills the top of the viewport, when its own line has
+   * scrolled out of sight.
+   *
+   * Long output is the case where a terminal loses you: three screens into a build log,
+   * the command that produced it is gone and there is nothing on screen that says what
+   * you are reading.
+   */
+  const [sticky, setSticky] = useState<string | null>(null);
 
   // Kept in a ref so the xterm callbacks below always read the current value
   // without needing to be rebuilt when settings change.
@@ -325,6 +335,12 @@ export function TerminalPane({ paneId, active, onFocus }: Props) {
     if (rendererReason) {
       pushNotice(rendererReason);
     }
+
+    // One marker per command start, so the viewport can be mapped back to a command.
+    // Markers are xterm's own: they move with reflow and dispose themselves when their
+    // line is trimmed out of scrollback, which is exactly the bookkeeping this would
+    // otherwise have to do by hand and get wrong.
+    const marks: { marker: IMarker; command: string }[] = [];
 
     const handles: Handles = {
       term,
@@ -468,6 +484,43 @@ export function TerminalPane({ paneId, active, onFocus }: Props) {
       });
     });
 
+    /** The command owning the top visible line, or null when its own line is visible. */
+    const recomputeSticky = () => {
+      if (handles.disposed) return;
+      setSticky(
+        stickyCommandFor(
+          marks.map((m) => ({ line: m.marker.line, command: m.command })),
+          term.buffer.active.viewportY,
+          term.buffer.active.type === "alternate",
+        ),
+      );
+    };
+
+    const scrollSub = term.onScroll(recomputeSticky);
+    // Also on resize: reflow moves every marker, so a header correct a moment ago can
+    // become the wrong one without any scrolling at all.
+    const resizeStickySub = term.onResize(recomputeSticky);
+
+    const startedUnlisten = api.on<api.BlockSummary>("block://started", (block) => {
+      if (handles.disposed || block.pane_id !== handles.backendPaneId) return;
+      // Registered inside a write callback, not immediately. `term.write` is buffered, so
+      // at the moment this event arrives the bytes that moved the cursor to the command's
+      // line may not have been applied yet, and the marker would land a line or two off.
+      term.write("", () => {
+        if (handles.disposed) return;
+        const marker = term.registerMarker(0);
+        if (!marker) return;
+        marks.push({ marker, command: block.command });
+        marker.onDispose(() => {
+          const i = marks.findIndex((m) => m.marker === marker);
+          if (i >= 0) marks.splice(i, 1);
+        });
+        // Bounded independently of xterm's own disposal, so a session that never scrolls
+        // cannot accumulate markers without limit.
+        if (marks.length > 500) marks.splice(0, marks.length - 500);
+      });
+    });
+
     const dataSub = term.onData((data) => {
       if (handles.backendPaneId) {
         void api.ptyWrite(handles.backendPaneId, new TextEncoder().encode(data));
@@ -516,6 +569,9 @@ export function TerminalPane({ paneId, active, onFocus }: Props) {
       dataSub.dispose();
       binarySub.dispose();
       resizeSub.dispose();
+      scrollSub.dispose();
+      resizeStickySub.dispose();
+      void startedUnlisten.then((un) => un());
       term.textarea?.removeEventListener("paste", onPaste);
       void exitUnlisten.then((un) => un());
       if (handles.backendPaneId) void api.ptyClose(handles.backendPaneId).catch(() => {});
@@ -590,6 +646,36 @@ export function TerminalPane({ paneId, active, onFocus }: Props) {
       onMouseDown={onFocus}
       onContextMenu={onContextMenu}
     >
+      {sticky && (
+        <div
+          // Pinned over the output rather than pushing it down: the terminal's row count
+          // is what the shell was told, and taking a row away mid-session would reflow
+          // everything and misalign a full-screen program.
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 5,
+            padding: "3px var(--sp-3)",
+            background: "color-mix(in srgb, var(--tervin-terminal-bg) 92%, var(--tervin-ink))",
+            borderBottom: "1px solid var(--tervin-line)",
+            fontSize: "var(--text-meta)",
+            fontFamily: "var(--tervin-font-mono, monospace)",
+            color: "var(--tervin-ink-2)",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            // Clicks belong to the terminal underneath; this is a label, not a control.
+            pointerEvents: "none",
+          }}
+          aria-hidden="true"
+          title={sticky}
+        >
+          <span style={{ opacity: 0.6 }}>$ </span>
+          {sticky}
+        </div>
+      )}
       <div
         ref={hostRef}
         // `display: flex` rather than block: if anything ever does leave a second
