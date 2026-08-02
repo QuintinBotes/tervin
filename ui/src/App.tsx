@@ -53,6 +53,7 @@ import { PlanSurface } from "./components/PlanSurface";
 import { HistorySurface } from "./components/HistorySurface";
 import { FileExplorer } from "./components/FileExplorer";
 import { ConnectionsPanel } from "./components/ConnectionsPanel";
+import { SavedCommands } from "./components/SavedCommands";
 import { GitPanel } from "./components/GitPanel";
 
 /** The surfaces, in the order the switcher shows them. */
@@ -258,6 +259,7 @@ export default function App() {
       )}
       {s.settingsOpen && <SettingsPanel />}
       {s.connectionsOpen && <ConnectionsOverlay />}
+      {s.savedCommandsOpen && <SavedCommands />}
       {s.pendingApprovals.length > 0 && <ApprovalSheet />}
     </div>
   );
@@ -1173,6 +1175,9 @@ function runAction(action: string, pane: string | null): boolean {
       return true;
     // With surfaces there is no inspector to toggle; these switch surface, which
     // is the same intent expressed in a two-column layout.
+    case "commands.saved":
+      s.setSavedCommands(true);
+      return true;
     case "connections.open":
       // Previously switched surface, which quietly meant the Connections panel — SSH
       // hosts, tmux sessions, serial ports — was written and never reachable.

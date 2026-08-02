@@ -215,6 +215,7 @@ export function overlayOpen(state: WorkspaceState): boolean {
     state.searchOpen ||
     state.settingsOpen ||
     state.connectionsOpen ||
+    state.savedCommandsOpen ||
     state.pendingApprovals.length > 0
   );
 }
@@ -229,6 +230,8 @@ interface WorkspaceState {
   settingsOpen: boolean;
   /** The Connections overlay: SSH hosts, tmux sessions, serial ports. */
   connectionsOpen: boolean;
+  /** The saved-commands overlay. */
+  savedCommandsOpen: boolean;
 
   // terminal canvas
   tabs: Tab[];
@@ -301,6 +304,7 @@ interface WorkspaceActions {
   setSearch: (open: boolean) => void;
   setSettings: (open: boolean) => void;
   setConnections: (open: boolean) => void;
+  setSavedCommands: (open: boolean) => void;
 
   addPane: (pane: Pane, tabId?: string) => void;
   /**
@@ -421,6 +425,7 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   searchOpen: false,
   settingsOpen: false,
   connectionsOpen: false,
+  savedCommandsOpen: false,
 
   tabs: [],
   panes: {},
@@ -460,6 +465,7 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   setSearch: (searchOpen) => set({ searchOpen }),
   setSettings: (settingsOpen) => set({ settingsOpen }),
   setConnections: (connectionsOpen) => set({ connectionsOpen }),
+  setSavedCommands: (savedCommandsOpen) => set({ savedCommandsOpen }),
   setHandoff: (pendingHandoff) => set({ pendingHandoff }),
 
   // ------------------------------------------------------------------ panes

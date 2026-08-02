@@ -759,6 +759,43 @@ export const settingsGet = (key: string) =>
 export const settingsSet = (key: string, value: string) =>
   invoke<void>("settings_set", { key, value });
 
+/** One hole in a saved command. */
+export interface SavedParameter {
+  name: string;
+  /** Prefilled when present, so the common case is one keystroke. */
+  default: string | null;
+}
+
+/**
+ * A saved command with its holes already parsed.
+ *
+ * Parsed in Rust, not here: a second implementation of what counts as a hole would
+ * eventually disagree about `${HOME}` or `awk '{print $1}'`, and the disagreement would
+ * show up as a corrupted command.
+ */
+export interface SavedCommandView {
+  id: string;
+  name: string;
+  template: string;
+  description: string | null;
+  uses: number;
+  parameters: SavedParameter[];
+}
+
+export const savedCommands = () => invoke<SavedCommandView[]>("saved_commands");
+
+export const savedCommandUpsert = (name: string, template: string, description: string) =>
+  invoke<void>("saved_command_upsert", { name, template, description });
+
+export const savedCommandDelete = (id: string) => invoke<void>("saved_command_delete", { id });
+
+/** Fill the holes and note the use. Returns the line to type. */
+export const savedCommandRender = (
+  id: string,
+  template: string,
+  values: [string, string][],
+) => invoke<string>("saved_command_render", { id, template, values });
+
 export const workspaceSave = (id: string, name: string, json: string) =>
   invoke<void>("workspace_save", { id, name, json });
 
