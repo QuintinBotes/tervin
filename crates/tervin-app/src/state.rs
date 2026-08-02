@@ -99,6 +99,12 @@ impl AppState {
                     "Could not prune old agent history: {e}. Nothing was lost."
                 )),
             }
+            // Saved terminal output ages out on the same window. It is bulkier than an
+            // event and is raw output, so keeping it longer than the transcripts it sits
+            // beside would be the wrong way round.
+            if let Err(e) = store.prune_scrollback(retention) {
+                tracing::warn!("could not prune saved scrollback: {e}");
+            }
         }
 
         let (profiles, profile_error) = ProfileConfig::load();

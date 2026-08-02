@@ -32,9 +32,14 @@ import {
   type Surface,
 } from "./lib/store";
 import { applyTheme, findTheme } from "./design/themes";
-import { listPanes } from "./lib/panes";
+import { listPanes, serialise as serialisePaneTree } from "./lib/panes";
 import { Keymap, formatChord } from "./lib/keymap";
-import { clearPane, scrollPane, selectAllInPane } from "./components/TerminalPane";
+import {
+  clearPane,
+  scrollPane,
+  selectAllInPane,
+  serialisePane,
+} from "./components/TerminalPane";
 import { PaneTree } from "./components/PaneTree";
 import { SearchOverlay } from "./components/SearchOverlay";
 import { Mark } from "./components/Mark";
@@ -106,9 +111,16 @@ export default function App() {
         s.refreshBlocks(),
         s.refreshAgents(),
       ]);
-      // Idempotent in the store, so a remount or a double-invoked effect cannot
-      // open a second pane.
-      s.ensureFirstPane(makePane());
+      // Last session first, falling back to one fresh pane. Both are idempotent in
+      // the store, so a remount or a double-invoked effect cannot open a second pane.
+      const restored = await s.restoreSession((saved) => ({
+        ...makePane(saved.cwd || undefined),
+        title: saved.title,
+        program: saved.program,
+        args: saved.args,
+        remote: saved.remote,
+      }));
+      if (!restored) s.ensureFirstPane(makePane());
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -148,6 +160,40 @@ export default function App() {
       }),
     ];
     return () => subs.forEach((sub) => void sub.then((un) => un()));
+  }, []);
+
+  // The layout is saved whenever it changes, and once more as the window closes.
+  //
+  // Debounced rather than written per change: dragging a divider rewrites the tree
+  // continuously, and a database write per frame would be felt. Only the structure is
+  // watched, so ordinary terminal output never triggers a save.
+  const layoutKey = useWorkspace((st) =>
+    JSON.stringify([
+      st.activeTabId,
+      st.tabs.map((t) => [t.id, t.title, t.root && serialisePaneTree(t.root), t.activePaneId]),
+      Object.values(st.panes).map((p) => [p.id, p.cwd, p.program]),
+    ]),
+  );
+  const restoreEnabled = useWorkspace((st) => st.appearance.restoreSession);
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      void useWorkspace.getState().saveSession(serialisePane);
+    }, 1200);
+    return () => clearTimeout(handle);
+  }, [layoutKey, restoreEnabled]);
+
+  useEffect(() => {
+    // The debounce above can still be pending when the window goes away, so the last
+    // change is flushed here too. `pagehide` fires for a closing window where
+    // `beforeunload` is unreliable inside a webview.
+    const flush = () => void useWorkspace.getState().saveSession(serialisePane);
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+    };
   }, []);
 
   const keymap = useMemo(() => new Keymap(), []);

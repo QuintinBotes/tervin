@@ -85,6 +85,17 @@ Tervin also **never answers `allow`** through a hook — only `deny` or `defer`.
 would skip the runtime's *own* checks, and a safety feature that quietly disables
 another safety feature is not one.
 
+## It reopens where you left off
+
+Tabs, splits, each pane's directory and its recent output come back on launch. The
+processes do not — they exited with the app — so each pane starts a fresh shell below its
+old output, under a line saying exactly that. A restored screen that looked live would be
+worse than no restore at all.
+
+Saved output is only returned to a pane running the same program, so a local shell's
+history can never reappear inside an SSH session. It ages out on the same retention window
+as agent history and is deleted as soon as you switch the setting off.
+
 ## Agents you start yourself
 
 Open a pane, type `claude`, and it becomes a Thread — titled after your prompt, with

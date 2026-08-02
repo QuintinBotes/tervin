@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal, type ILink, type IViewportRange } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { CanvasAddon } from "@xterm/addon-canvas";
@@ -44,6 +45,8 @@ interface Handles {
   term: Terminal;
   fit: FitAddon;
   search: SearchAddon;
+  /** Turns the live buffer back into terminal output, for session restore. */
+  serialize: SerializeAddon;
   backendPaneId: string | null;
   disposed: boolean;
 }
@@ -127,6 +130,25 @@ export function writeToPane(paneId: string, text: string): void {
   void api.ptyWrite(handles.backendPaneId, new TextEncoder().encode(text));
 }
 
+/**
+ * The pane's visible history as terminal output, ready to be written back.
+ *
+ * Bounded here as well as in the store: serialising 10,000 lines of colourised output
+ * produces megabytes, and doing that for a dozen panes on every save would cost more
+ * than the feature is worth. The newest screenfuls are what a restored pane needs.
+ */
+export function serialisePane(paneId: string, lines = 2000): string | null {
+  const handles = handlesByPane.get(paneId);
+  if (!handles || handles.disposed) return null;
+  try {
+    return handles.serialize.serialize({ scrollback: lines });
+  } catch {
+    // Serialising is a convenience, and a renderer in an odd state must not be able to
+    // stop the session from being saved at all.
+    return null;
+  }
+}
+
 export function clearPane(paneId: string): void {
   handlesByPane.get(paneId)?.term.clear();
 }
@@ -168,6 +190,10 @@ export function TerminalPane({ paneId, active, onFocus }: Props) {
   const program = useWorkspace((s) => s.panes[paneId]?.program ?? null);
   const paneArgs = useWorkspace((s) => s.panes[paneId]?.args);
   const paneEnv = useWorkspace((s) => s.panes[paneId]?.env);
+  // The pane id this one is standing in for, set only by session restore. Read once at
+  // mount rather than subscribed to: history is written before the shell starts and
+  // must not be replayed if the value changes later.
+  const restoreKey = useWorkspace((s) => s.panes[paneId]?.restoreKey ?? null);
   const markPaneExited = useWorkspace((s) => s.markPaneExited);
   const pushNotice = useWorkspace((s) => s.pushNotice);
   /** True while a dialog is layered over the workspace. */
@@ -219,6 +245,8 @@ export function TerminalPane({ paneId, active, onFocus }: Props) {
     const search = new SearchAddon();
     term.loadAddon(fit);
     term.loadAddon(search);
+    const serialize = new SerializeAddon();
+    term.loadAddon(serialize);
     // Unicode 11 widths: without it, CJK and emoji misalign the whole grid.
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = "11";
@@ -298,7 +326,14 @@ export function TerminalPane({ paneId, active, onFocus }: Props) {
       pushNotice(rendererReason);
     }
 
-    const handles: Handles = { term, fit, search, backendPaneId: null, disposed: false };
+    const handles: Handles = {
+      term,
+      fit,
+      search,
+      serialize,
+      backendPaneId: null,
+      disposed: false,
+    };
     handlesByPane.set(paneId, handles);
 
     // ----------------------------------------------------------- smart links
@@ -360,6 +395,32 @@ export function TerminalPane({ paneId, active, onFocus }: Props) {
     // Deferred to after the first layout: the shell is told its size once, at
     // startup, so starting it before the pane has measured would give it the
     // wrong geometry and make the first prompt wrap badly.
+    // Written before the shell starts, so the first prompt lands after the restored
+    // history rather than on top of it.
+    //
+    // Written straight to the terminal and never through the PTY, which matters: the
+    // Block engine only sees bytes from the shell, so replaying old output cannot
+    // fabricate Blocks for commands that already ran. (`SerializeAddon` emits cell
+    // contents and colour attributes; the OSC markers Blocks are built from are
+    // consumed as they stream and are not part of the buffer.)
+    const restoreScrollback = async () => {
+      if (!restoreKey || handles.disposed) return;
+      try {
+        // The backend refuses to return output saved against a different program, so a
+        // local shell's history cannot reappear inside an SSH session.
+        const saved = await api.scrollbackLoad(restoreKey, program ?? null);
+        if (!saved || handles.disposed) return;
+        term.write(saved);
+        // Said plainly, because a restored screen is indistinguishable from a live one
+        // and someone could otherwise believe a command is still running.
+        term.write(
+          "\r\n\x1b[2m── restored from your last session; nothing above is running ──\x1b[0m\r\n",
+        );
+      } catch {
+        // A pane with no history is the normal case, not a failure worth a notice.
+      }
+    };
+
     const startPty = () => {
       if (handles.disposed || handles.backendPaneId) return;
       void api
@@ -401,7 +462,9 @@ export function TerminalPane({ paneId, active, onFocus }: Props) {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         safeFit(handles, host);
-        startPty();
+        // Restored first, then the shell — and the shell is not made to wait on a
+        // database read, because a slow restore must not delay a usable prompt.
+        void restoreScrollback().finally(startPty);
       });
     });
 
