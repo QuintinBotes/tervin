@@ -9,6 +9,9 @@
 //! - [`acp`] — the Agent Client Protocol adapter, which covers every agent that
 //!   speaks ACP rather than one vendor. It is also the only adapter with a genuine
 //!   pre-execution permission gate.
+//! - [`instructions`] — instruction files and MCP config other tools already wrote
+//!   into the project, reported per runtime with whether that runtime will actually
+//!   read them.
 //! - [`handoff`] — the Context Bundle, which moves work between agents by turning
 //!   the provider-neutral event stream into a briefing another agent can read.
 //! - [`local`] — OpenAI-compatible model endpoints (LM Studio, Ollama, vLLM,
@@ -22,6 +25,7 @@ pub mod acp;
 pub mod claude;
 pub mod codex;
 pub mod handoff;
+pub mod instructions;
 pub mod local;
 pub mod mcp;
 pub mod profile;
@@ -32,6 +36,10 @@ pub use acp::{known_acp_agents, AcpAgentSpec, AcpRuntime};
 pub use claude::ClaudeCodeRuntime;
 pub use codex::{CodexNormalizer, CodexRuntime};
 pub use handoff::{CommandRecord, ContextBundle};
+pub use instructions::{
+    adoption_candidates, discover as discover_instructions, Discovered, InForce, InstructionFile,
+    InstructionKind, McpAdoption, McpConfigFile, McpConfigKind, Readership, Scope,
+};
 pub use local::{known_local_endpoints, LocalEndpoint, LocalModelRuntime};
 pub use mcp::{McpConfig, McpServer};
 pub use profile::{AgentProfile, ImportCandidate, ProfileConfig};

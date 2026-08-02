@@ -832,6 +832,53 @@ pub async fn agents_overview(state: State<'_, Arc<AppState>>) -> Result<AgentsOv
     })
 }
 
+/// What other tools have already written into this project.
+#[derive(Debug, Serialize)]
+pub struct ProjectInstructions {
+    pub discovered: agent_runtime::instructions::Discovered,
+    /// MCP servers found in another tool's configuration that Tervin could adopt.
+    ///
+    /// Offered, never applied: Tervin supplies MCP servers to ACP agents, so copying
+    /// one here genuinely adds tools to an agent, which is the user's call.
+    pub adoptable: Vec<agent_runtime::McpAdoption>,
+    /// The project this was read from, so the panel can never be ambiguous about
+    /// which directory it is describing.
+    pub project_root: String,
+}
+
+/// Report instruction files and MCP configuration already present in the project.
+///
+/// Read-only, and reads names rather than contents. Which of these a given runtime
+/// will actually obey is decided in [`agent_runtime::instructions::readership`], and
+/// the UI asks per runtime rather than presenting one list as universal, because the
+/// same `CLAUDE.md` is in force for Claude Code and ignored by Codex.
+#[tauri::command]
+pub async fn project_instructions(state: State<'_, Arc<AppState>>) -> Result<ProjectInstructions> {
+    let root = state.project_root();
+    // Tervin's own configured servers, so an offer to adopt can say whether it would
+    // overwrite one that is already there.
+    let existing: Vec<String> = agent_runtime::McpConfig::load()
+        .0
+        .enabled()
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    blocking(move || {
+        // A filesystem walk, so off the UI thread. `home_dir` is resolved here rather
+        // than inside discovery so the walk itself stays testable against temporary
+        // directories.
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+        let discovered = agent_runtime::instructions::discover(&root, &home);
+        let adoptable = agent_runtime::adoption_candidates(&discovered.mcp, &existing);
+        Ok(ProjectInstructions {
+            discovered,
+            adoptable,
+            project_root: tervin_core::paths::abbreviate(&root),
+        })
+    })
+    .await
+}
+
 /// Register a user-configured agent that speaks the Agent Client Protocol.
 ///
 /// This is the payoff of integrating with a protocol rather than with vendors: an
