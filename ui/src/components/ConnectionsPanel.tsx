@@ -19,6 +19,24 @@ export function ConnectionsPanel() {
   const s = useWorkspace();
   const [preview, setPreview] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  // Per host, and only when asked. A config can name a hundred machines across several
+  // networks; probing them all on open would be a port scan of the user's own
+  // infrastructure — slow, noisy in someone's logs, and a conversation with their
+  // security team.
+  const [reach, setReach] = useState<Record<string, api.Reachability>>({});
+  const [checking, setChecking] = useState<string | null>(null);
+
+  async function check(alias: string) {
+    setChecking(alias);
+    try {
+      const found = await api.sshProbe(alias);
+      setReach((prev) => ({ ...prev, [alias]: found }));
+    } catch (e) {
+      s.pushNotice(describeError(e));
+    } finally {
+      setChecking(null);
+    }
+  }
 
   useEffect(() => {
     if (!s.connections) void s.refreshConnections();
@@ -124,6 +142,18 @@ export function ConnectionsPanel() {
                     key
                   </span>
                 )}
+                <ReachabilityChip alias={host.alias} state={reach[host.alias]} />
+                <button
+                  className="btn btn-xs btn-ghost"
+                  title="Check whether this host answers on its SSH port"
+                  disabled={checking === host.alias}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void check(host.alias);
+                  }}
+                >
+                  {checking === host.alias ? "checking…" : "check"}
+                </button>
               </>
             }
             preview={preview[`ssh:${host.alias}`]}
@@ -308,4 +338,72 @@ function sshDetail(host: api.SshHostInfo): string {
   const user = host.user ? `${host.user}@` : "";
   const port = host.port && host.port !== 22 ? `:${host.port}` : "";
   return `${user}${target}${port}`;
+}
+
+/**
+ * What a probe found, in as many words as it actually justifies.
+ *
+ * A connect time is labelled as a connect time. SSH exposes no round-trip time, so the one
+ * thing this must never do is render a TCP measurement as latency — a number with the wrong
+ * name is worse than no number, because it will be trusted.
+ */
+function ReachabilityChip({
+  alias,
+  state,
+}: {
+  alias: string;
+  state: api.Reachability | undefined;
+}) {
+  if (!state) return null;
+
+  switch (state.state) {
+    case "multiplexed":
+      // The only state Tervin knows rather than infers: `ssh -O check` asked the running
+      // master. So it carries no number — one would imply a measurement that never happened.
+      return (
+        <span className="chip tone-green" title={`A multiplexed connection to ${alias} is already open`}>
+          connected
+        </span>
+      );
+    case "open":
+      return (
+        <span
+          className="chip tone-green tabular"
+          title="Time to establish a TCP connection to the SSH port — not SSH round-trip time, which SSH does not report"
+        >
+          {state.connect_ms} ms to connect
+        </span>
+      );
+    case "refused":
+      // Meaningfully different from silence: something answered.
+      return (
+        <span className="chip tone-amber" title="The host answered but nothing is listening on that port">
+          refused
+        </span>
+      );
+    case "timeout":
+      return (
+        <span
+          className="chip tone-amber"
+          title="Nothing answered. Firewalled, asleep or gone — indistinguishable from here"
+        >
+          no answer
+        </span>
+      );
+    case "unresolved":
+      return (
+        <span className="chip tone-red" title="The hostname did not resolve">
+          unknown name
+        </span>
+      );
+    case "skipped":
+      // The honest case, and the one a naive implementation gets wrong: a host behind a
+      // jump may only be routable from the jump host, so a failed direct connection would
+      // report "unreachable" about a host that works.
+      return (
+        <span className="chip" title={state.reason}>
+          not checkable
+        </span>
+      );
+  }
 }

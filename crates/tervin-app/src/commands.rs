@@ -1375,6 +1375,26 @@ pub async fn environment(state: State<'_, Arc<AppState>>) -> Result<ShellEnviron
     .await
 }
 
+/// What Tervin could learn about reaching one SSH host.
+///
+/// On demand only, and per host. A `~/.ssh/config` can name a hundred machines across
+/// several networks, so probing them all on open would be a port scan of the user's
+/// infrastructure — slow, noisy in someone's logs, and quite possibly a conversation with
+/// their security team.
+#[tauri::command]
+pub async fn ssh_probe(alias: String) -> Result<session_manager::Reachability> {
+    blocking(move || {
+        let config = session_manager::SshConfig::load();
+        let Some(host) = config.get(&alias).cloned() else {
+            return Ok(session_manager::Reachability::Skipped {
+                reason: format!("{alias} is not in your SSH config"),
+            });
+        };
+        Ok(session_manager::probe(&host))
+    })
+    .await
+}
+
 /// Everything Tervin can attach a pane to.
 ///
 /// Blocking: it reads `~/.ssh/config`, probes `/dev`, and shells out to tmux and
