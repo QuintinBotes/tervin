@@ -36,7 +36,8 @@ the transcript they already write. Commands an agent runs become Blocks.
 reason on every absence. `exit_code_reported` so a derived exit status is never shown as a
 measured one. Tervin never answers `allow` on a runtime's behalf.
 
-**Not present, and worth saying:** no Linux or Windows build, no signing, no kitty keyboard
+**Not present, and worth saying:** no Linux or Windows build, no signing (§5, a decision
+rather than a gap), no kitty keyboard
 or graphics protocol, no scripting API, no plugin system, no team or sync features, no
 instant replay, no broadcast input, no vi-mode scrollback, no tmux control mode, no CLI flag
 completion.
@@ -480,18 +481,22 @@ Naming these matters as much as the roadmap, because each is a plausible request
 - **A latency number that is not a latency measurement.** Already refused.
 - **Kitty keyboard and graphics protocols**, unless the renderer is replaced. Not possible, so
   not claimed.
-- **Apple Developer ID signing.** $99 a year to remove a one-time dialog from the two
-  least-recommended install routes, when five routes have no dialog at all because macOS
-  applies quarantine in the downloading application and `curl` does not set it. The money
-  buys polish on the path users are told not to take.
+- **Apple Developer ID signing and notarisation.** $99 a year, forever, tied to one person's
+  Apple ID, to remove a one-time dialog from the two least-recommended install routes, when
+  five routes have no dialog at all because macOS applies quarantine in the downloading
+  application and `curl` does not set it. The money buys polish on the path users are told
+  not to take. A published `SHA256SUMS.txt` that the installer *requires* rather than warns
+  about covers the realistic threat, a substituted download. It does not cover a verified
+  third-party identity, which is a real thing to be missing and is said plainly in
+  `SECURITY.md` rather than glossed.
 - **Instant replay**, probably. Blocks answer the question people actually ask.
 
 ---
 
 ## 6. Ordered plan
 
-**Now: credibility.** Linux and Windows in CI (§3.1).
-Read `AGENTS.md` and existing MCP config (§4.2). CLI completion via the shell (§3.2).
+**Now: credibility.** Linux and Windows in CI (§3.1). Read `AGENTS.md` and existing MCP
+config (§4.2). CLI completion via the shell (§3.2).
 
 **Next: the two structural gaps.** Detach and reattach (§3.8). Parallel Threads with worktree
 isolation (§4.1). These are the largest pieces of work here and the two that change what

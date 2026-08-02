@@ -225,13 +225,24 @@ Ordered best to worst:
 
 **Tervin will not be signed with an Apple Developer ID.** $99 a year to remove a one-time
 dialog from the two least-recommended rows is not a good trade for an open-source project, and
-five of the seven routes above have no dialog at all. The release tooling reports plainly that
-a build is unsigned rather than leaving you to discover it at launch.
+five of the seven routes above have no dialog at all. That is not luck: macOS applies
+`com.apple.quarantine` in the *downloading application* rather than in the kernel, so `curl`
+and Node never set it. The release tooling reports plainly that a build is unsigned rather
+than leaving you to discover it at launch.
+
+So verify what you downloaded, because that checksum is doing the job a signature would:
+
+```sh
+shasum -a 256 -c SHA256SUMS.txt
+```
 
 If you specifically want the `.dmg` and the dialog gone, the honest answer is to use the
 installer script instead. If you want to know why the dialog appeared, it is macOS working
 correctly on an unsigned application, and it is not something Tervin should quietly defeat on
 your behalf.
+
+What a checksum does not give you that a signature would is stated plainly in
+[SECURITY.md](SECURITY.md#why-unsigned-is-a-decision-not-a-gap), rather than left implied.
 
 <a id="building-it-yourself"></a>
 
@@ -288,9 +299,6 @@ permission model including the parts where Tervin admits it cannot enforce anyth
 
 What is deliberately incomplete, and tracked rather than hidden:
 
-- **Builds are not signed, and will not be.** A Developer ID costs $99 a year to remove a
-  one-time dialog from the two least-recommended install routes, while five routes have no
-  dialog at all. See the install table above for which is which.
 - **CLI flag completions**: the largest remaining gap against Warp. The design question is
   open, not the implementation: shipping spec data, executing `--help`, and asking the
   user's shell all have real costs, and picking wrong is worse than waiting.

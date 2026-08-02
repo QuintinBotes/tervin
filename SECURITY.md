@@ -8,7 +8,9 @@
 >   ID costs $99 a year and this is an open-source project. So **the checksum is the only thing
 >   vouching for a binary**, which makes verifying it against `SHA256SUMS.txt` not a formality
 >   but the actual security boundary. The installer script and the npm package both verify it
->   and refuse to install without it; a manual download is on you.
+>   and refuse to install without it; a manual download is on you. The full reasoning, and
+>   what this does *not* protect you from, is in
+>   [Why unsigned](#why-unsigned-is-a-decision-not-a-gap) below.
 > - **No third party has reviewed any of this.** The permission model is documented
 >   carefully and its limits are stated, but documented carefully is not the same as
 >   audited.
@@ -130,11 +132,54 @@ injection off in Settings.
 is treated as untrusted input and only ever parsed, never executed, which is why
 discovered profiles are *offered* rather than adopted.
 
+## Why unsigned is a decision, not a gap
+
+Tervin will not be code-signed or notarised. This is a choice, so here is the reasoning
+rather than an apology.
+
+**What signing would actually buy.** `com.apple.quarantine` is set by the **downloading
+application**, not by the kernel. Verified with `xattr` on real downloads: a browser sets it,
+while `curl` and `npm` set only `com.apple.provenance`, which Gatekeeper does not act on. So
+the install routes Tervin recommends, the `curl` installer, `npx tervin`, and the source
+formula, already launch with no dialog and no `xattr` incantation. A Developer ID would
+improve exactly one route, a `.dmg` dragged out of a browser, which the README already names
+as the worst way to install this.
+
+**What it would cost.** $99 a year, forever, tied to one person's Apple ID. For an
+open-source project that is a recurring bill and a single point of failure, and it buys a
+polish improvement on the route nobody is asked to use.
+
+**What replaces it.** The checksum, and it is stronger than people assume. Every release
+publishes `SHA256SUMS.txt`, the installer verifies against it and **refuses to install
+without it** rather than warning and continuing, and the checksums are produced in the same
+CI run as the artefacts, in the public log. Verify any download:
+
+```sh
+shasum -a 256 -c SHA256SUMS.txt
+```
+
+**What this genuinely does not give you.** A signature attests to a stable identity that
+Apple has verified, and a checksum does not. If this repository or its releases were
+compromised, an attacker could publish a matching checksum, exactly as they could obtain a
+Developer ID. What the checksum does defend is the wire and the mirror: a corrupted or
+substituted download between GitHub and your disk. That is the realistic threat for a
+project this size, and it is covered. Signing would add a third-party identity check, and
+that is a real thing to be missing. It is being skipped knowingly, not overlooked.
+
+**Never do this**, and nothing Tervin ships will ever tell you to:
+
+```sh
+xattr -d com.apple.quarantine /Applications/Tervin.app   # don't
+```
+
+Teaching that reflex is worse than any warning dialog, because the next thing it is used on
+will not be Tervin. If a route you chose does produce a Gatekeeper warning, use
+right-click, Open, once, or switch to a route that never triggers it.
+
 ## Known gaps
 
 Stated rather than omitted:
 
-- **Builds are not yet notarised.** macOS warns on first launch until they are.
 - **Linux is untested.** The code is written for Unix generally, but untested is not
   supported.
 - **A malicious agent is not contained.** Tervin gates what it is asked about. An agent
