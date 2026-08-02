@@ -12,9 +12,11 @@
 //! working exactly as they already do. A reimplementation would diverge from
 //! those in ways that are hard to see and worse to debug.
 
+pub mod agent;
 pub mod probe;
 pub mod ssh;
 
+pub use agent::{agent_state, key_status, AgentState, KeyStatus};
 pub use probe::{probe, Reachability};
 pub use ssh::{SshConfig, SshHost};
 

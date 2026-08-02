@@ -448,6 +448,44 @@ describe("ConnectionsPanel reachability", () => {
     expect(probe).not.toHaveBeenCalled();
   });
 
+  it("says a key is not loaded, which is the whole point of checking", async () => {
+    // Knowing a connection is about to ask for a passphrase, before it asks.
+    vi.spyOn(api, "sshKeyStatus").mockResolvedValue([
+      ["build-box", { status: "not_loaded", path: "~/.ssh/id_ed25519" }],
+    ]);
+    withHost();
+    const { container } = render(<ConnectionsPanel />);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(container.textContent).toContain("key not loaded");
+  });
+
+  it("says nothing when the key is loaded", async () => {
+    // A row decorated with "fine" for every host is noise that hides the one that is not.
+    vi.spyOn(api, "sshKeyStatus").mockResolvedValue([
+      ["build-box", { status: "loaded", comment: "me@laptop" }],
+    ]);
+    withHost();
+    const { container } = render(<ConnectionsPanel />);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(container.textContent).not.toContain("key not loaded");
+  });
+
+  it("does not call an uncheckable key a missing one", async () => {
+    // The key may well be in the agent; saying otherwise sends someone looking for a
+    // problem that is not there.
+    vi.spyOn(api, "sshKeyStatus").mockResolvedValue([
+      [
+        "build-box",
+        { status: "cannot_fingerprint", path: "~/.ssh/id", reason: "not there" },
+      ],
+    ]);
+    withHost();
+    const { container } = render(<ConnectionsPanel />);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(container.textContent).toContain("not checkable");
+    expect(container.textContent).not.toContain("key not loaded");
+  });
+
   it("labels a connect time as a connect time, never as latency", async () => {
     // The whole reason this feature is shaped the way it is. SSH reports no round-trip
     // time, so a number called "latency" would be a measurement of something else.

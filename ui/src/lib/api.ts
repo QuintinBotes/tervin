@@ -915,6 +915,23 @@ export type Reachability =
   | { state: "unresolved" }
   | { state: "skipped"; reason: string };
 
+/**
+ * Whether a host's key is loaded in the SSH agent.
+ *
+ * Tervin never stores a passphrase. The problem worth solving is narrower: knowing a
+ * connection is about to ask for one, before it asks. Identity is established by
+ * fingerprint, computed from the *public* key, so no private key is ever read.
+ */
+export type KeyStatus =
+  | { status: "loaded"; comment: string }
+  | { status: "not_loaded"; path: string }
+  | { status: "no_identity_named" }
+  | { status: "cannot_fingerprint"; path: string; reason: string }
+  | { status: "unknown" };
+
+/** One call for every host: `ssh-add -l` is a single question. */
+export const sshKeyStatus = () => invoke<[string, KeyStatus][]>("ssh_key_status");
+
 /** Probe one host, on demand. Never called for a whole config at once. */
 export const sshProbe = (alias: string) => invoke<Reachability>("ssh_probe", { alias });
 

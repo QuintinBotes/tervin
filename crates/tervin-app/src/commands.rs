@@ -1395,6 +1395,29 @@ pub async fn ssh_probe(alias: String) -> Result<session_manager::Reachability> {
     .await
 }
 
+/// Which SSH keys the agent is holding, and what that means per host.
+///
+/// One call for the whole list rather than one per host: `ssh-add -l` is a single question
+/// and asking it once per host would be the same answer many times over.
+#[tauri::command]
+pub async fn ssh_key_status() -> Result<Vec<(String, session_manager::KeyStatus)>> {
+    blocking(move || {
+        let agent = session_manager::agent_state();
+        let config = session_manager::SshConfig::load();
+        Ok(config
+            .hosts
+            .iter()
+            .map(|host| {
+                (
+                    host.alias.clone(),
+                    session_manager::key_status(host, &agent),
+                )
+            })
+            .collect())
+    })
+    .await
+}
+
 /// Everything Tervin can attach a pane to.
 ///
 /// Blocking: it reads `~/.ssh/config`, probes `/dev`, and shells out to tmux and

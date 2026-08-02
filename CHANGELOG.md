@@ -5,7 +5,26 @@ log says what changed, and this is for what it means to someone using it.
 
 ## Unreleased
 
-Everything below is unreleased. No version has been tagged and nothing has been published,
+Everything below is unreleased.
+### SSH keys: knowing before it asks
+
+- Connections now say **"key not loaded"** for a host whose key is not in the SSH agent, so
+  a passphrase prompt is never a surprise. The tooltip gives the `ssh-add --apple-use-keychain`
+  command to fix it.
+- **Tervin does not store passphrases, and will not.** That would make it a place worth
+  attacking, duplicate what the operating system already does properly, and buy nothing that
+  `ssh-add --apple-use-keychain` does not already give you. The problem actually worth
+  solving is narrower: knowing a connection is about to ask.
+- **No private key is ever read.** Identity is established by fingerprint: `ssh-add -l`
+  reports what the agent holds, `ssh-keygen -lf` computes one from the *public* half, and
+  the two are compared. Matching on the agent's comment field would have been easier and is
+  wrong, because a key loaded under a different comment would be reported missing.
+- A key whose public half is missing is reported as **not checkable**, not as missing: it
+  may well be in the agent, and saying otherwise sends someone looking for a problem that
+  is not there. An unreachable agent is likewise "unknown" rather than "not loaded".
+- A loaded key shows nothing at all. A row decorated with "fine" for every host is noise
+  that hides the one that is not.
+ No version has been tagged and nothing has been published,
 so this is a record of what has been built rather than of what anyone can install.
 ### Codex, read over `codex exec --json`
 
