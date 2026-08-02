@@ -25,6 +25,49 @@ log says what changed, and this is for what it means to someone using it.
   eventually disagree about `${HOME}`, and the disagreement would be a broken command.
 - A name repeated in a template is one parameter filled in both places, and saving over an
   existing name refines it without resetting how often you have used it.
+### `cd` knows where you have been
+
+- **⌘J jumps to any directory a pane has sat in**, ranked by how often you go there and
+  how recently, then by what you typed. An empty box shows where you usually are; a typed
+  one shows the thing you mean. This is what people install `z` or `autojump` for.
+- It **fills in `cd` and leaves the newline to you**. Running a command in someone's shell
+  because they pressed Enter in a picker is a more surprising thing than filling it in, and
+  a wrong path is trivial to fix before sending.
+- A directory that has since been deleted is **shown struck through with an offer to
+  forget it**, not hidden. Quietly dropping it looks like a lost result, and "gone" is
+  exactly what someone needs to know before wondering why `cd` failed.
+- Bound to **⌘J**, not Tab. zsh and fish completion is better than anything Tervin would
+  write for arbitrary commands, and taking Tab would replace something good with something
+  worse.
+
+### Fixed: a pane's directory never updated after it opened
+
+`pane://cwd` had been emitted since Blocks existed and nothing listened to it — and
+`BlockEvent::CwdChanged` did not carry a pane id, so nothing *could*. A pane's directory
+stayed whatever it was when it spawned, which made the status rail stale, saved the wrong
+directory into a restored session, and made per-pane completion impossible.
+
+With that fixed, `@path` completion in the composer is now scoped to the focused pane's
+directory, so `@src/…` in a split means that pane's `src` rather than the project root's.
+### Commands an agent ran are Blocks now
+
+- A command an agent runs is the same kind of thing as one you ran, so it becomes a
+  **Block**: searchable with the rest of your history, bookmarkable, with parsed
+  diagnostics you can jump to. `Block::thread_id` existed for this and had never been set.
+- **It does not claim an exit code unless a runtime reported one.** An ACP terminal
+  reports a real status; Claude Code reports success or failure and nothing more, and the
+  0/1/130 on its events is Tervin's inference. A Block from the latter carries no number
+  and says *"no exit status reported"* — because an exit code is the one field people read
+  as fact, and a fabricated one is worse than an admitted gap.
+- **It says the log is partial, and for the right reason.** Adapters pass a bounded
+  excerpt, which is a different thing from a shell Block hitting the capture limit —
+  showing the wrong reason would send someone looking for a setting that is not involved.
+- A Block an agent ran is **marked as such** in the list. In a mixed list that is the
+  difference between "I did that" and "an agent did that", which changes how a failure
+  reads.
+- This covers agents Tervin launched *and* one you ran yourself in a pane: a `Bash` call
+  in a session transcript now produces a real command with its stdout and stderr, paired
+  to its own call by id rather than by position.
 
 ### Programs in a pane are told when the theme changes
 

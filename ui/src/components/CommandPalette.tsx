@@ -79,6 +79,13 @@ export function CommandPalette({ onNewPane }: { onNewPane: () => void }) {
       run: () => s.setSavedCommands(true),
     });
     out.push({
+      id: "directory.jump",
+      label: "Jump to a directory",
+      category: "Workspace",
+      hint: "⌘J",
+      run: () => s.setDirectoryJump(true),
+    });
+    out.push({
       id: "split.h",
       label: "Split right",
       category: "Workspace",

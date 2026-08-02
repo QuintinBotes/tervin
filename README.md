@@ -85,6 +85,14 @@ Tervin also **never answers `allow`** through a hook — only `deny` or `defer`.
 would skip the runtime's *own* checks, and a safety feature that quietly disables
 another safety feature is not one.
 
+## `cd` knows where you have been
+
+⌘J opens a picker over every directory a pane has sat in, ranked by how often you go there
+and how recently — then by what you typed. It fills in `cd` and leaves the newline to you.
+
+Not bound to Tab: zsh and fish completion is better than anything Tervin would write for
+arbitrary commands, and taking Tab would replace something good with something worse.
+
 ## It reopens where you left off
 
 Tabs, splits, each pane's directory and its recent output come back on launch. The
@@ -134,14 +142,29 @@ so npm is what vouches for the binary.
 `npx tervin --install` copies it into `/Applications`; `--where` prints the cached
 bundle; `--clean` removes it.
 
+### Homebrew
+
+This repository is its own tap, so the URL is given explicitly. The `homebrew-`
+repository prefix that `brew tap user/repo` looks for is only that shortcut's
+assumption; the two-argument form takes any URL:
+
+```sh
+brew tap quintinbotes/tervin https://github.com/QuintinBotes/tervin
+brew install --cask tervin     # prebuilt, one Gatekeeper approval
+brew install --formula tervin  # compiles locally, nothing to approve
+```
+
+One repository rather than two, so the packaging is reviewed in the same pull request
+as the code it packages.
+
 ### Other routes, and what each costs you
 
 | Route | Gatekeeper prompt? | Notes |
 | --- | --- | --- |
 | `npx tervin` | **No** | Nothing to approve. Needs Node 20+. |
-| `brew install --formula QuintinBotes/tervin/tervin` | **No** | Compiles locally, so nothing is quarantined. Needs a Rust and Node toolchain and a few minutes. |
+| `brew install --formula tervin` | **No** | Compiles locally, so nothing is quarantined. Needs a Rust and Node toolchain and a few minutes. |
 | Build from source | **No** | Same reason. |
-| `brew install --cask QuintinBotes/tervin/tervin` | Yes | Homebrew marks cask downloads quarantined. One-time approval. |
+| `brew install --cask tervin` | Yes | Homebrew marks cask downloads quarantined. One-time approval. |
 | `.dmg` from GitHub Releases | Yes | Browser downloads are quarantined. One-time approval. |
 
 Signing and notarising with an Apple Developer ID would remove the prompt from the last

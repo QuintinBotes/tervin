@@ -320,10 +320,24 @@ fn handle_block_events(state: &Arc<AppState>, app: &AppHandle, events: Vec<Block
                     let _ = app.emit("block://finished", &to_emit);
                 });
             }
-            BlockEvent::CwdChanged { cwd, host } => {
+            BlockEvent::CwdChanged { pane_id, cwd, host } => {
+                // Recorded before it is announced, so a `cd` is in the recent list even
+                // if the UI is not listening yet.
+                //
+                // Only local directories: a path on a remote host does not exist here, and
+                // offering to `cd` into it from a local pane would fail.
+                if host.is_none() {
+                    let store = state.store.clone();
+                    let path = cwd.clone();
+                    std::thread::spawn(move || {
+                        if let Err(e) = store.record_directory(&path) {
+                            tracing::debug!("could not record {path}: {e}");
+                        }
+                    });
+                }
                 let _ = app.emit(
                     "pane://cwd",
-                    serde_json::json!({ "cwd": cwd, "host": host }),
+                    serde_json::json!({ "paneId": pane_id.as_str(), "cwd": cwd, "host": host }),
                 );
             }
             BlockEvent::AgentActivity { pane_id, activity } => {
@@ -346,6 +360,17 @@ fn handle_block_events(state: &Arc<AppState>, app: &AppHandle, events: Vec<Block
                             tracing::warn!("could not persist observed event: {e}");
                         }
                         let _ = app.emit("thread://event", event);
+
+                        // A session someone ran themselves gets Blocks too. Its commands
+                        // come from the transcript, so they arrive as `tool.requested`
+                        // rather than `command.started` — the bridge ignores what it does
+                        // not recognise, which keeps this a single code path.
+                        if let Some(thread_id) = &event.thread_id {
+                            let update = state.agent_blocks.observe(thread_id, event);
+                            if update.started.is_some() || update.finished.is_some() {
+                                crate::agent_blocks::apply(&state.store, &app, update);
+                            }
+                        }
                     }
                     if let Some((thread_id, thread_state)) = &observation.state {
                         let _ = app.emit(
@@ -1048,12 +1073,25 @@ pub async fn thread_start(
     // Drain the event stream into the store and on to the UI.
     {
         let store = state.store.clone();
+        // The whole state, not just the store: the Block bridge holds the command
+        // currently open for this Thread. `State<'_, _>` cannot cross into the task, so
+        // the inner `Arc` is cloned out first.
+        let app_state = state.inner().clone();
         let app = app.clone();
         let thread_id = thread_id.clone();
         let mut events = launched.events;
         tokio::spawn(async move {
             while let Some(event) = events.recv().await {
                 let _ = app.emit("thread://event", &event);
+
+                // A command an agent ran is the same kind of thing as one you ran, so it
+                // becomes a Block — searchable and bookmarkable with the rest of your
+                // history rather than only a row on this timeline.
+                let update = app_state.agent_blocks.observe(&thread_id, &event);
+                if update.started.is_some() || update.finished.is_some() {
+                    crate::agent_blocks::apply(&store, &app, update);
+                }
+
                 if let tervin_core::EventPayload::ThreadState { state } = &event.payload {
                     let _ = app.emit(
                         "thread://state",
@@ -1433,6 +1471,85 @@ pub async fn saved_commands(state: State<'_, Arc<AppState>>) -> Result<Vec<Saved
     .await
 }
 
+/// A directory offered for `cd`, with why it ranked where it did.
+#[derive(Debug, Serialize)]
+pub struct DirSuggestion {
+    pub path: String,
+    /// The last component, for a compact list.
+    pub name: String,
+    pub visits: u32,
+    /// Rounded to whole hours; the UI turns it into "3d".
+    pub age_hours: u32,
+    /// True when the directory is gone. Shown rather than hidden, with the offer to
+    /// forget it — silently dropping it would look like the history had lost something.
+    pub missing: bool,
+}
+
+/// Directories you have actually been in, ranked for a query.
+///
+/// Two signals, combined rather than chosen between: how well the path matches what was
+/// typed, and frecency. Matching alone puts a directory visited once above the one lived
+/// in daily; frecency alone ignores the query. The fuzzy score dominates once something
+/// is typed, which is what makes an empty box show "where I usually am" and a typed one
+/// show "the thing I mean".
+#[tauri::command]
+pub async fn recent_directories(
+    state: State<'_, Arc<AppState>>,
+    query: String,
+    limit: usize,
+) -> Result<Vec<DirSuggestion>> {
+    let store = state.store.clone();
+    blocking(move || {
+        let mut dirs = store
+            .recent_directories()
+            .map_err(|e| CommandError::new("recent_dirs", e))?;
+
+        let query = query.trim().to_string();
+        let mut scored: Vec<(f64, block_engine::RecentDir)> = Vec::new();
+        let mut matcher = file_index::fuzzy::Matcher::default();
+
+        for dir in dirs.drain(..) {
+            let score = if query.is_empty() {
+                dir.frecency()
+            } else {
+                // Matched against the whole path, not just the last component: people
+                // type `app/src` as readily as `src`.
+                match matcher.score(&query, &dir.path) {
+                    Some(m) => f64::from(m.score) + dir.frecency(),
+                    None => continue,
+                }
+            };
+            scored.push((score, dir));
+        }
+
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                // A stable tiebreak, so the list does not reshuffle between keystrokes.
+                .then_with(|| a.1.path.cmp(&b.1.path))
+        });
+        scored.truncate(limit.clamp(1, 200));
+
+        Ok(scored
+            .into_iter()
+            .map(|(_, dir)| DirSuggestion {
+                name: std::path::Path::new(&dir.path)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&dir.path)
+                    .to_string(),
+                // Checked at query time rather than on record: a directory is deleted
+                // long after it was visited, and a stale flag is worse than none.
+                missing: !std::path::Path::new(&dir.path).is_dir(),
+                age_hours: dir.age_hours.min(f64::from(u32::MAX)) as u32,
+                visits: dir.visits,
+                path: dir.path,
+            })
+            .collect())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn saved_command_upsert(
     state: State<'_, Arc<AppState>>,
@@ -1482,6 +1599,13 @@ pub async fn saved_command_render(
         Ok(block_engine::saved::render(&template, &values))
     })
     .await
+}
+
+/// Forget a directory, for one that no longer exists.
+#[tauri::command]
+pub async fn forget_directory(state: State<'_, Arc<AppState>>, path: String) -> Result<()> {
+    let store = state.store.clone();
+    blocking(move || store.forget_directory(&path).map_err(CommandError::from)).await
 }
 
 /// One entry in a directory listing.
