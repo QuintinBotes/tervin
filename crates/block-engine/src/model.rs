@@ -281,3 +281,39 @@ mod tests {
         );
     }
 }
+
+/// A directory Tervin has seen a pane sit in.
+///
+/// Carries what ranking needs and nothing else, so the score can be computed without a
+/// second query or a clock reading per row.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecentDir {
+    pub path: String,
+    pub visits: u32,
+    /// Hours since it was last used, at the moment it was read.
+    pub age_hours: f64,
+}
+
+impl RecentDir {
+    /// Frecency: how often, discounted by how long ago.
+    ///
+    /// The shape `z` and `autojump` settled on, and for the same reason — neither half
+    /// works alone. Pure recency loses the directory you live in as soon as you glance
+    /// anywhere else; a pure count keeps somewhere you abandoned months ago at the top.
+    ///
+    /// The bands are coarse on purpose. A smooth decay curve invites tuning that nobody
+    /// can perceive, while "today, this week, this month, older" is a distinction people
+    /// actually make.
+    pub fn frecency(&self) -> f64 {
+        let weight = if self.age_hours < 24.0 {
+            4.0
+        } else if self.age_hours < 24.0 * 7.0 {
+            2.0
+        } else if self.age_hours < 24.0 * 30.0 {
+            1.0
+        } else {
+            0.4
+        };
+        f64::from(self.visits) * weight
+    }
+}

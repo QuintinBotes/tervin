@@ -72,6 +72,10 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   // Overlays.
   { id: "palette.open", label: "Command palette", keys: "mod+k", when: "global" },
   { id: "search.open", label: "Find in terminal", keys: "mod+f", when: "global" },
+  // `mod+j` for jump. Deliberately not a Tab override: zsh and fish completion is better
+  // than anything Tervin would write for arbitrary commands, and taking Tab would replace
+  // something good with something worse. `mod+d` is Split right, by iTerm convention.
+  { id: "directory.jump", label: "Jump to a directory", keys: "mod+j", when: "global" },
   { id: "search.next", label: "Find next", keys: "mod+g", when: "global" },
   { id: "search.prev", label: "Find previous", keys: "mod+shift+g", when: "global" },
   { id: "overlay.close", label: "Close overlay", keys: "escape", when: "overlay" },

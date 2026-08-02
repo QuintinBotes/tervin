@@ -5,6 +5,31 @@ log says what changed, and this is for what it means to someone using it.
 
 ## Unreleased
 
+### `cd` knows where you have been
+
+- **⌘J jumps to any directory a pane has sat in**, ranked by how often you go there and
+  how recently, then by what you typed. An empty box shows where you usually are; a typed
+  one shows the thing you mean. This is what people install `z` or `autojump` for.
+- It **fills in `cd` and leaves the newline to you**. Running a command in someone's shell
+  because they pressed Enter in a picker is a more surprising thing than filling it in, and
+  a wrong path is trivial to fix before sending.
+- A directory that has since been deleted is **shown struck through with an offer to
+  forget it**, not hidden. Quietly dropping it looks like a lost result, and "gone" is
+  exactly what someone needs to know before wondering why `cd` failed.
+- Bound to **⌘J**, not Tab. zsh and fish completion is better than anything Tervin would
+  write for arbitrary commands, and taking Tab would replace something good with something
+  worse.
+
+### Fixed: a pane's directory never updated after it opened
+
+`pane://cwd` had been emitted since Blocks existed and nothing listened to it — and
+`BlockEvent::CwdChanged` did not carry a pane id, so nothing *could*. A pane's directory
+stayed whatever it was when it spawned, which made the status rail stale, saved the wrong
+directory into a restored session, and made per-pane completion impossible.
+
+With that fixed, `@path` completion in the composer is now scoped to the focused pane's
+directory, so `@src/…` in a split means that pane's `src` rather than the project root's.
+
 ### Programs in a pane are told when the theme changes
 
 - Tervin ships fifteen themes, and switching between them is a normal thing to do — but

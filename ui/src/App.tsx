@@ -53,6 +53,7 @@ import { PlanSurface } from "./components/PlanSurface";
 import { HistorySurface } from "./components/HistorySurface";
 import { FileExplorer } from "./components/FileExplorer";
 import { ConnectionsPanel } from "./components/ConnectionsPanel";
+import { DirectoryJump } from "./components/DirectoryJump";
 import { GitPanel } from "./components/GitPanel";
 
 /** The surfaces, in the order the switcher shows them. */
@@ -152,6 +153,13 @@ export default function App() {
       api.on<unknown>("block://finished", () => {
         void store().refreshBlocks();
         void store().refreshGit();
+      }),
+      // A pane changed directory. Nothing listened to this before, which is why a
+      // pane's directory never updated after it was spawned.
+      api.on<{ paneId: string; cwd: string; host: string | null }>("pane://cwd", (p) => {
+        // A remote path does not exist locally, so recording it as this pane's directory
+        // would make completion and the file explorer point at nothing.
+        if (!p.host) store().setPaneCwd(p.paneId, p.cwd);
       }),
       api.on<{ selection: string; text: string }>("clipboard://requested", (p) => {
         store().pushNotice(
@@ -258,6 +266,7 @@ export default function App() {
       )}
       {s.settingsOpen && <SettingsPanel />}
       {s.connectionsOpen && <ConnectionsOverlay />}
+      {s.directoryJumpOpen && <DirectoryJump />}
       {s.pendingApprovals.length > 0 && <ApprovalSheet />}
     </div>
   );
@@ -1173,6 +1182,9 @@ function runAction(action: string, pane: string | null): boolean {
       return true;
     // With surfaces there is no inspector to toggle; these switch surface, which
     // is the same intent expressed in a two-column layout.
+    case "directory.jump":
+      s.setDirectoryJump(true);
+      return true;
     case "connections.open":
       // Previously switched surface, which quietly meant the Connections panel — SSH
       // hosts, tmux sessions, serial ports — was written and never reachable.
