@@ -4,8 +4,11 @@
 > threat model has never been tested against real use: only against the tests. Two
 > specifics worth stating plainly:
 >
-> - **Release builds are unsigned and unnotarised.** That needs a paid Apple Developer ID.
->   Verify any download against `SHA256SUMS.txt` rather than trusting the source.
+> - **Release builds are unsigned and unnotarised, deliberately and permanently.** A Developer
+>   ID costs $99 a year and this is an open-source project. So **the checksum is the only thing
+>   vouching for a binary**, which makes verifying it against `SHA256SUMS.txt` not a formality
+>   but the actual security boundary. The installer script and the npm package both verify it
+>   and refuse to install without it; a manual download is on you.
 > - **No third party has reviewed any of this.** The permission model is documented
 >   carefully and its limits are stated, but documented carefully is not the same as
 >   audited.

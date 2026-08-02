@@ -480,13 +480,17 @@ Naming these matters as much as the roadmap, because each is a plausible request
 - **A latency number that is not a latency measurement.** Already refused.
 - **Kitty keyboard and graphics protocols**, unless the renderer is replaced. Not possible, so
   not claimed.
+- **Apple Developer ID signing.** $99 a year to remove a one-time dialog from the two
+  least-recommended install routes, when five routes have no dialog at all because macOS
+  applies quarantine in the downloading application and `curl` does not set it. The money
+  buys polish on the path users are told not to take.
 - **Instant replay**, probably. Blocks answer the question people actually ask.
 
 ---
 
 ## 6. Ordered plan
 
-**Now: credibility.** Linux and Windows in CI (§3.1). Signing (needs a Developer ID).
+**Now: credibility.** Linux and Windows in CI (§3.1).
 Read `AGENTS.md` and existing MCP config (§4.2). CLI completion via the shell (§3.2).
 
 **Next: the two structural gaps.** Detach and reattach (§3.8). Parallel Threads with worktree
