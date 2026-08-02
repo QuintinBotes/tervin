@@ -12,6 +12,7 @@ pub mod builder;
 pub mod model;
 pub mod parse;
 pub mod query;
+pub mod saved;
 pub mod store;
 
 pub use builder::{BlockBuilder, BlockEvent};
@@ -20,6 +21,7 @@ pub use model::{
     TestSummary,
 };
 pub use query::{BlockFilter, BlockSummary, SortOrder};
+pub use saved::{Parameter, SavedCommand};
 pub use store::{AuditRecord, PromptHit, Store, StoreError};
 
 #[cfg(test)]

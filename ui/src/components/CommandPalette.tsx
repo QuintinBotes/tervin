@@ -72,6 +72,13 @@ export function CommandPalette({ onNewPane }: { onNewPane: () => void }) {
       exitCode: null,
     });
     out.push({
+      id: "commands.saved",
+      label: "Saved commands",
+      category: "Workspace",
+      hint: "⌘⇧S",
+      run: () => s.setSavedCommands(true),
+    });
+    out.push({
       id: "split.h",
       label: "Split right",
       category: "Workspace",

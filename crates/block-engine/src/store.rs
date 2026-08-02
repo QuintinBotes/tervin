@@ -29,6 +29,10 @@ pub enum StoreError {
     Io(#[from] std::io::Error),
     #[error("block {0} not found")]
     NotFound(BlockId),
+    /// Input the caller could fix, as opposed to something that went wrong. Separate so
+    /// the UI can show the message as guidance rather than as a failure.
+    #[error("{0}")]
+    Invalid(String),
 }
 
 type Result<T> = std::result::Result<T, StoreError>;
@@ -212,6 +216,20 @@ impl Store {
                 body       TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS pane_scrollback_saved ON pane_scrollback(saved_at);
+
+            -- Commands worth keeping, with their varying parts named.
+            CREATE TABLE IF NOT EXISTS saved_commands (
+                id          TEXT PRIMARY KEY,
+                name        TEXT NOT NULL,
+                template    TEXT NOT NULL,
+                description TEXT,
+                uses        INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT NOT NULL,
+                last_used   TEXT
+            );
+            -- Names are how people find these, so two with the same name is a mistake
+            -- rather than a feature.
+            CREATE UNIQUE INDEX IF NOT EXISTS saved_commands_name ON saved_commands(name);
 
             CREATE TABLE IF NOT EXISTS kv (
                 key   TEXT PRIMARY KEY,
@@ -941,6 +959,86 @@ impl Store {
         )?)
     }
 
+    // ----------------------------------------------------------- saved commands
+
+    /// Save a command, replacing one with the same name.
+    ///
+    /// Replacing rather than erroring: someone refining a command they saved yesterday
+    /// expects to overwrite it, and a duplicate-name error at that moment is an obstacle
+    /// rather than a safeguard.
+    pub fn upsert_saved_command(&self, command: &crate::saved::SavedCommand) -> Result<()> {
+        let name = command.name.trim();
+        let template = command.template.trim();
+        if name.is_empty() || template.is_empty() {
+            return Err(StoreError::Invalid(
+                "A saved command needs a name and a command.".to_string(),
+            ));
+        }
+        if template.len() > crate::saved::MAX_TEMPLATE {
+            return Err(StoreError::Invalid(format!(
+                "That command is {} bytes and the limit is {}.",
+                template.len(),
+                crate::saved::MAX_TEMPLATE
+            )));
+        }
+
+        let conn = self.conn.lock();
+        // Keyed on the name so a save overwrites — but the existing id and use count
+        // survive, because refining a command should not reset how often you have used it.
+        conn.execute(
+            "INSERT INTO saved_commands (id, name, template, description, uses, created_at)
+             VALUES (?1, ?2, ?3, ?4, 0, ?5)
+             ON CONFLICT(name) DO UPDATE SET template = ?3, description = ?4",
+            params![
+                command.id,
+                name,
+                template,
+                command.description.as_deref().map(str::trim),
+                rfc3339(&tervin_core::now()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Every saved command, most used first.
+    pub fn saved_commands(&self) -> Result<Vec<crate::saved::SavedCommand>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, template, description, uses FROM saved_commands
+             ORDER BY uses DESC, last_used DESC, name ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(crate::saved::SavedCommand {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                template: r.get(2)?,
+                description: r.get(3)?,
+                uses: r.get::<_, i64>(4)?.max(0) as u32,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Note that a saved command was used, so the list ranks by what you reach for.
+    pub fn record_saved_command_use(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE saved_commands SET uses = uses + 1, last_used = ?2 WHERE id = ?1",
+            params![id, rfc3339(&tervin_core::now())],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_saved_command(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM saved_commands WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
     // ------------------------------------------------------------ workspaces
 
     pub fn save_workspace(&self, id: &str, name: &str, json: &str) -> Result<()> {
@@ -1658,5 +1756,162 @@ mod scrollback_tests {
     fn a_pane_with_no_saved_output_simply_has_none() {
         let store = Store::open_in_memory().unwrap();
         assert_eq!(store.load_scrollback("never-seen", None).unwrap(), None);
+    }
+}
+
+/// Saved commands: storage, replacement, and ranking.
+#[cfg(test)]
+mod saved_command_tests {
+    use super::*;
+    use crate::saved::SavedCommand;
+
+    fn cmd(name: &str, template: &str) -> SavedCommand {
+        SavedCommand {
+            id: format!("sc_{name}"),
+            name: name.to_string(),
+            template: template.to_string(),
+            description: None,
+            uses: 0,
+        }
+    }
+
+    #[test]
+    fn round_trips_a_saved_command() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_saved_command(&cmd("deploy", "deploy {{env:staging}}"))
+            .unwrap();
+
+        let all = store.saved_commands().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].name, "deploy");
+        assert_eq!(all[0].template, "deploy {{env:staging}}");
+    }
+
+    #[test]
+    fn saving_the_same_name_refines_it_without_resetting_its_use_count() {
+        // Someone tweaking yesterday's command expects to overwrite it, and losing the
+        // ranking as a side effect would push it back down the list for no reason.
+        let store = Store::open_in_memory().unwrap();
+        store.upsert_saved_command(&cmd("deploy", "old")).unwrap();
+        let id = store.saved_commands().unwrap()[0].id.clone();
+        store.record_saved_command_use(&id).unwrap();
+        store.record_saved_command_use(&id).unwrap();
+
+        let mut refined = cmd("deploy", "new and better");
+        // A caller that generates a fresh id must not create a second row.
+        refined.id = "sc_different".to_string();
+        store.upsert_saved_command(&refined).unwrap();
+
+        let all = store.saved_commands().unwrap();
+        assert_eq!(all.len(), 1, "a duplicate row was created");
+        assert_eq!(all[0].template, "new and better");
+        assert_eq!(all[0].uses, 2, "the use count was reset");
+        assert_eq!(all[0].id, id, "the id changed under existing references");
+    }
+
+    #[test]
+    fn ranks_by_what_you_reach_for() {
+        let store = Store::open_in_memory().unwrap();
+        for name in ["alpha", "beta", "gamma"] {
+            store.upsert_saved_command(&cmd(name, "x")).unwrap();
+        }
+        let beta = store
+            .saved_commands()
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == "beta")
+            .unwrap();
+        store.record_saved_command_use(&beta.id).unwrap();
+
+        assert_eq!(store.saved_commands().unwrap()[0].name, "beta");
+    }
+
+    #[test]
+    fn unused_commands_are_ordered_predictably() {
+        // With no use counts to separate them the list must not shuffle between opens.
+        let store = Store::open_in_memory().unwrap();
+        for name in ["gamma", "alpha", "beta"] {
+            store.upsert_saved_command(&cmd(name, "x")).unwrap();
+        }
+        let names: Vec<String> = store
+            .saved_commands()
+            .unwrap()
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn a_command_with_no_name_or_no_body_is_refused_with_a_reason() {
+        let store = Store::open_in_memory().unwrap();
+        for (name, template) in [("", "ls"), ("  ", "ls"), ("name", ""), ("name", "   ")] {
+            let err = store
+                .upsert_saved_command(&cmd(name, template))
+                .expect_err("empty input should be refused");
+            // Guidance, not a failure: the message is shown to the person who typed it.
+            assert!(matches!(err, StoreError::Invalid(_)), "{err:?}");
+            assert!(err.to_string().contains("needs a name"));
+        }
+        assert!(store.saved_commands().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_absurdly_long_command_is_refused_and_says_the_limit() {
+        let store = Store::open_in_memory().unwrap();
+        let huge = "x".repeat(crate::saved::MAX_TEMPLATE + 1);
+        let err = store
+            .upsert_saved_command(&cmd("pasted", &huge))
+            .expect_err("an over-long template should be refused");
+        assert!(err
+            .to_string()
+            .contains(&crate::saved::MAX_TEMPLATE.to_string()));
+    }
+
+    #[test]
+    fn name_and_body_are_trimmed_so_a_stray_space_is_not_a_new_command() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_saved_command(&cmd("deploy", "  deploy  "))
+            .unwrap();
+        store
+            .upsert_saved_command(&cmd("  deploy  ", "again"))
+            .unwrap();
+
+        let all = store.saved_commands().unwrap();
+        assert_eq!(all.len(), 1, "a trailing space created a second command");
+        assert_eq!(all[0].template, "again");
+    }
+
+    #[test]
+    fn deleting_removes_only_that_command() {
+        let store = Store::open_in_memory().unwrap();
+        store.upsert_saved_command(&cmd("keep", "x")).unwrap();
+        store.upsert_saved_command(&cmd("drop", "y")).unwrap();
+
+        let drop_id = store
+            .saved_commands()
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == "drop")
+            .unwrap()
+            .id;
+        store.delete_saved_command(&drop_id).unwrap();
+
+        let names: Vec<String> = store
+            .saved_commands()
+            .unwrap()
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(names, vec!["keep"]);
+    }
+
+    #[test]
+    fn recording_a_use_for_something_gone_is_harmless() {
+        let store = Store::open_in_memory().unwrap();
+        assert!(store.record_saved_command_use("sc_never").is_ok());
+        assert!(store.delete_saved_command("sc_never").is_ok());
     }
 }

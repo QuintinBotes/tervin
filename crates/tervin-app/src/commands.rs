@@ -1405,6 +1405,85 @@ pub async fn path_complete(
         .await
 }
 
+/// A saved command, with its holes already worked out for the UI.
+#[derive(Debug, Serialize)]
+pub struct SavedCommandView {
+    #[serde(flatten)]
+    pub command: block_engine::SavedCommand,
+    /// Parsed here rather than in the UI, so one parser decides what a hole is. A second
+    /// implementation in TypeScript would eventually disagree with this one, and the
+    /// disagreement would show up as a corrupted command.
+    pub parameters: Vec<block_engine::Parameter>,
+}
+
+#[tauri::command]
+pub async fn saved_commands(state: State<'_, Arc<AppState>>) -> Result<Vec<SavedCommandView>> {
+    let store = state.store.clone();
+    blocking(move || {
+        Ok(store
+            .saved_commands()
+            .map_err(CommandError::from)?
+            .into_iter()
+            .map(|command| SavedCommandView {
+                parameters: block_engine::saved::parameters(&command.template),
+                command,
+            })
+            .collect())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn saved_command_upsert(
+    state: State<'_, Arc<AppState>>,
+    name: String,
+    template: String,
+    description: Option<String>,
+) -> Result<()> {
+    let store = state.store.clone();
+    blocking(move || {
+        store
+            .upsert_saved_command(&block_engine::SavedCommand {
+                // Only used for a brand-new command; a save under an existing name keeps
+                // the id the row already has.
+                id: format!("sc_{}", uuid::Uuid::new_v4().simple()),
+                name,
+                template,
+                description: description.filter(|d| !d.trim().is_empty()),
+                uses: 0,
+            })
+            .map_err(CommandError::from)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn saved_command_delete(state: State<'_, Arc<AppState>>, id: String) -> Result<()> {
+    let store = state.store.clone();
+    blocking(move || store.delete_saved_command(&id).map_err(CommandError::from)).await
+}
+
+/// Fill a saved command's holes and note that it was used.
+///
+/// Rendered in Rust rather than in the UI for the same reason the parameters are: one
+/// implementation of what a hole is.
+#[tauri::command]
+pub async fn saved_command_render(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    template: String,
+    values: Vec<(String, String)>,
+) -> Result<String> {
+    let store = state.store.clone();
+    blocking(move || {
+        // Recorded even if the user never sends the line: they reached for it, which is
+        // what the ranking is trying to measure.
+        let _ = store.record_saved_command_use(&id);
+        Ok(block_engine::saved::render(&template, &values))
+    })
+    .await
+}
+
 /// One entry in a directory listing.
 #[derive(Debug, Serialize)]
 pub struct DirEntry {

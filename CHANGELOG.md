@@ -5,6 +5,27 @@ log says what changed, and this is for what it means to someone using it.
 
 ## Unreleased
 
+### Saved commands, with the parts that change named
+
+- Half the commands anyone runs are a shape with one thing different: deploy to *this*
+  environment, tail *that* service. Shell history gives you the last one you happened to
+  type, which is the wrong instance of the shape more often than not — so people keep a
+  scratch file and copy out of it. **⌘⇧S is that file**, with the holes made explicit:
+  `kubectl logs -f {{service}} --namespace {{env:staging}}`.
+- **It fills in and does not run.** A saved command is often the destructive kind, and
+  seeing the filled-in line before sending it is the whole safeguard.
+- **A hole left blank stays visible in the command.** `rm -rf {{path}}` with nothing filled
+  in must not become `rm -rf` — a command that fails loudly beats one that runs with an
+  argument silently missing.
+- **The parser is deliberately narrow.** A hole is exactly `{{name}}` or
+  `{{name:default}}`. `${HOME}`, `awk '{print $1}'`, a JSON body and `mv x.{txt,md}` are
+  ordinary text and survive byte for byte — treating any brace as a hole would corrupt the
+  command someone saved, and they would only find out when it ran.
+- Parsing and rendering happen in Rust, not in the UI. A second implementation would
+  eventually disagree about `${HOME}`, and the disagreement would be a broken command.
+- A name repeated in a template is one parameter filled in both places, and saving over an
+  existing name refines it without resetting how often you have used it.
+
 ### Programs in a pane are told when the theme changes
 
 - Tervin ships fifteen themes, and switching between them is a normal thing to do — but

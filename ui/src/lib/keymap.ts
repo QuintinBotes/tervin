@@ -72,6 +72,9 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   // Overlays.
   { id: "palette.open", label: "Command palette", keys: "mod+k", when: "global" },
   { id: "search.open", label: "Find in terminal", keys: "mod+f", when: "global" },
+  // `mod+shift+s` — "saved". Not a Tab override, for the same reason as the directory
+  // picker: the shell's own completion is better than anything Tervin would write.
+  { id: "commands.saved", label: "Saved commands", keys: "mod+shift+s", when: "global" },
   { id: "search.next", label: "Find next", keys: "mod+g", when: "global" },
   { id: "search.prev", label: "Find previous", keys: "mod+shift+g", when: "global" },
   { id: "overlay.close", label: "Close overlay", keys: "escape", when: "overlay" },
