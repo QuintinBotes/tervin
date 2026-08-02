@@ -11,7 +11,9 @@ pub mod pty;
 pub mod registry;
 pub mod signals;
 
-pub use osc::{ModeChange, OscHit, OscScanner, PendingMarker, PrivateMode};
+pub use osc::{
+    ColorScheme, ModeChange, OscHit, OscScanner, PendingMarker, PrivateMode, TerminalQuery,
+};
 pub use pty::{PositionedSignal, PtyChunk, PtyConfig, PtyError, PtyEvent, PtySession};
 pub use registry::TerminalRegistry;
 pub use signals::{AgentActivity, AgentEvent, CommandMeta, ShellSignal, AGENT_NOTIFY_TARGET};

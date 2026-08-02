@@ -92,6 +92,64 @@ pub enum PrivateMode {
     /// Tracked so a click can be routed to the program rather than starting a
     /// selection.
     MouseReporting,
+    /// 2031 — colour-scheme change notification.
+    ///
+    /// An application asks to be told when the terminal's background goes light or
+    /// dark, so it can restyle itself instead of rendering unreadably. Tervin ships
+    /// fifteen themes and switching between them is a normal thing to do, which makes
+    /// this worth honouring rather than ignoring.
+    ///
+    /// Tracked per pane, because the report goes only to programs that asked: sending
+    /// an unsolicited `CSI ? 997` to a shell that never enabled the mode would put
+    /// stray text on the command line.
+    ColorSchemeUpdates,
+}
+
+/// A request from the program that the terminal is expected to answer.
+///
+/// Collected rather than answered, so replying stays the caller's decision — the same
+/// rule OSC 52 reads follow, where Tervin deliberately never answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalQuery {
+    /// `CSI ? 996 n` — whether the background is light or dark.
+    ColorScheme {
+        /// Offset one past the sequence.
+        end_offset: usize,
+    },
+}
+
+/// Which way round the terminal's background is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorScheme {
+    Dark,
+    Light,
+}
+
+impl ColorScheme {
+    /// The reply an application expects: `CSI ? 997 ; 1 n` for dark, `; 2 n` for light.
+    ///
+    /// The same bytes serve both purposes — answering `CSI ? 996 n` and reporting a later
+    /// change to a pane that enabled mode 2031 — so there is one definition of them.
+    pub fn report(self) -> &'static [u8] {
+        match self {
+            Self::Dark => b"\x1b[?997;1n",
+            Self::Light => b"\x1b[?997;2n",
+        }
+    }
+
+    /// Decide from a background colour's perceived brightness.
+    ///
+    /// Rec. 601 luma rather than a plain average: green contributes far more to
+    /// perceived brightness than blue, and averaging calls a saturated blue background
+    /// light when no one would read it that way.
+    pub fn from_background(r: u8, g: u8, b: u8) -> Self {
+        let luma = 0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b);
+        if luma < 128.0 {
+            Self::Dark
+        } else {
+            Self::Light
+        }
+    }
 }
 
 /// A DEC private mode changing state.
@@ -142,6 +200,8 @@ pub struct OscScanner {
     csi_params: Vec<u8>,
     /// Private-mode changes found during the current `feed` call.
     mode_changes: Vec<ModeChange>,
+    /// Queries the program made during the current `feed` call.
+    queries: Vec<TerminalQuery>,
 }
 
 impl Default for OscScanner {
@@ -159,6 +219,7 @@ impl OscScanner {
             pending_start: None,
             csi_params: Vec::with_capacity(16),
             mode_changes: Vec::new(),
+            queries: Vec::new(),
         }
     }
 
@@ -177,6 +238,7 @@ impl OscScanner {
     pub fn feed_indexed(&mut self, bytes: &[u8]) -> Vec<OscHit> {
         let mut found = Vec::new();
         self.mode_changes.clear();
+        self.queries.clear();
 
         // A sequence already in progress began before this slice, so it has no
         // start offset within it.
@@ -221,6 +283,14 @@ impl OscScanner {
                         0x40..=0x7E => {
                             if b == b'h' || b == b'l' {
                                 self.decode_private_modes(b == b'h', index + 1);
+                            } else if b == b'n' && self.csi_params == b"?996" {
+                                // `CSI ? 996 n` — "is your background light or dark?".
+                                // Recorded rather than answered here: this type does not
+                                // write to the terminal, and a scanner that replied would
+                                // be doing something its name does not say.
+                                self.queries.push(TerminalQuery::ColorScheme {
+                                    end_offset: index + 1,
+                                });
                             }
                             self.csi_params.clear();
                             self.state = State::Ground;
@@ -296,6 +366,11 @@ impl OscScanner {
         &self.mode_changes
     }
 
+    /// Queries seen in the most recent `feed` call, in order.
+    pub fn queries(&self) -> &[TerminalQuery] {
+        &self.queries
+    }
+
     /// Decode `CSI ? <n>;<n> h|l` into the modes Tervin tracks.
     ///
     /// A single sequence can carry several semicolon-separated modes, and
@@ -318,6 +393,7 @@ impl OscScanner {
                 2004 => PrivateMode::BracketedPaste,
                 1004 => PrivateMode::FocusReporting,
                 1000 | 1002 | 1003 | 1006 => PrivateMode::MouseReporting,
+                2031 => PrivateMode::ColorSchemeUpdates,
                 _ => continue,
             };
             self.mode_changes.push(ModeChange {
@@ -576,5 +652,115 @@ mod tests {
         assert_eq!(parts[0], b"8");
         assert_eq!(parts[1], b"");
         assert_eq!(parts[2], b"https://example.com/a;b");
+    }
+}
+
+/// Colour-scheme reporting: DEC mode 2031 and the `CSI ? 996 n` query.
+#[cfg(test)]
+mod color_scheme_tests {
+    use super::*;
+
+    fn modes(input: &[u8]) -> Vec<(PrivateMode, bool)> {
+        let mut s = OscScanner::new();
+        s.feed(input);
+        s.mode_changes()
+            .iter()
+            .map(|m| (m.mode, m.enabled))
+            .collect()
+    }
+
+    fn queries(input: &[u8]) -> Vec<TerminalQuery> {
+        let mut s = OscScanner::new();
+        s.feed(input);
+        s.queries().to_vec()
+    }
+
+    #[test]
+    fn tracks_a_program_subscribing_to_colour_scheme_changes() {
+        assert_eq!(
+            modes(b"\x1b[?2031h"),
+            vec![(PrivateMode::ColorSchemeUpdates, true)]
+        );
+        assert_eq!(
+            modes(b"\x1b[?2031l"),
+            vec![(PrivateMode::ColorSchemeUpdates, false)]
+        );
+    }
+
+    #[test]
+    fn reads_the_light_or_dark_query() {
+        assert_eq!(
+            queries(b"\x1b[?996n"),
+            // ESC [ ? 9 9 6 n — seven bytes.
+            vec![TerminalQuery::ColorScheme { end_offset: 7 }]
+        );
+    }
+
+    #[test]
+    fn the_query_offset_points_past_the_sequence() {
+        // Consumers cut output at this offset; if it were wrong, the query's own bytes
+        // would be captured into a Block as if the program had printed them.
+        let input = b"before\x1b[?996nafter";
+        let TerminalQuery::ColorScheme { end_offset } = queries(input)[0];
+        assert_eq!(&input[end_offset..], b"after");
+    }
+
+    #[test]
+    fn other_status_reports_are_not_mistaken_for_it() {
+        // `CSI 6 n` is the cursor-position report, which programs send constantly.
+        // Answering it with a colour scheme would corrupt their input.
+        assert!(queries(b"\x1b[6n").is_empty());
+        assert!(queries(b"\x1b[?6n").is_empty());
+        assert!(queries(b"\x1b[?997n").is_empty());
+        assert!(queries(b"\x1b[?996h").is_empty());
+    }
+
+    #[test]
+    fn a_query_split_across_two_reads_is_still_recognised() {
+        // A PTY read can end anywhere, including mid-sequence.
+        let mut s = OscScanner::new();
+        s.feed(b"\x1b[?99");
+        assert!(s.queries().is_empty());
+        s.feed(b"6n");
+        assert_eq!(s.queries().len(), 1);
+    }
+
+    #[test]
+    fn queries_do_not_accumulate_across_feeds() {
+        // They are per-feed, like mode changes; a stale query would be answered twice.
+        let mut s = OscScanner::new();
+        s.feed(b"\x1b[?996n");
+        assert_eq!(s.queries().len(), 1);
+        s.feed(b"plain output");
+        assert!(s.queries().is_empty());
+    }
+
+    #[test]
+    fn the_reply_is_the_sequence_applications_expect() {
+        assert_eq!(ColorScheme::Dark.report(), b"\x1b[?997;1n");
+        assert_eq!(ColorScheme::Light.report(), b"\x1b[?997;2n");
+    }
+
+    #[test]
+    fn brightness_is_judged_by_luma_not_by_average() {
+        // Tervin's own themes, at both ends.
+        assert_eq!(
+            ColorScheme::from_background(0x0d, 0x11, 0x17),
+            ColorScheme::Dark
+        );
+        assert_eq!(
+            ColorScheme::from_background(0xff, 0xff, 0xff),
+            ColorScheme::Light
+        );
+        assert_eq!(
+            ColorScheme::from_background(0xfa, 0xf4, 0xed),
+            ColorScheme::Light
+        );
+
+        // The case that makes luma the right choice: a saturated blue averages to 85,
+        // which a mean would call dark-ish, but its green channel is what the eye reads.
+        // Green at the same value is unambiguously light; blue is not.
+        assert_eq!(ColorScheme::from_background(0, 0, 0xff), ColorScheme::Dark);
+        assert_eq!(ColorScheme::from_background(0, 0xff, 0), ColorScheme::Light);
     }
 }

@@ -524,6 +524,8 @@ mod tests {
             signals,
             pending_marker: scanner.pending_marker(),
             mode_changes: scanner.mode_changes().to_vec(),
+            queries: Vec::new(),
+            color_scheme_updates: false,
             alternate_screen: false,
         }
     }
@@ -637,6 +639,8 @@ mod tests {
                 signals,
                 pending_marker: scanner.pending_marker(),
                 mode_changes: scanner.mode_changes().to_vec(),
+                queries: Vec::new(),
+                color_scheme_updates: false,
                 alternate_screen: false,
             }));
         }
@@ -745,6 +749,8 @@ mod tests {
                 signals: vec![],
                 pending_marker: PendingMarker::None,
                 mode_changes: vec![],
+                queries: Vec::new(),
+                color_scheme_updates: false,
                 alternate_screen: false,
             });
         }
@@ -788,6 +794,8 @@ mod tests {
             signals: vec![],
             pending_marker: PendingMarker::None,
             mode_changes: vec![],
+            queries: Vec::new(),
+            color_scheme_updates: false,
             alternate_screen: true,
         });
 
@@ -810,6 +818,8 @@ mod tests {
             },
             pending_marker: PendingMarker::None,
             mode_changes: vec![],
+            queries: Vec::new(),
+            color_scheme_updates: false,
             alternate_screen: false,
         });
 
