@@ -75,11 +75,44 @@ jobs:
           cargo test --workspace
           pnpm exec vitest run
 
-      - name: Build
+      - name: Decide whether to sign
+        # `certcheck`, not `sign`, because the step below is `signing` and two ids that
+        # differ by one letter is how the wrong one gets referenced later.
+        id: certcheck
+        # An absent GitHub secret interpolates to an **empty string**, not to nothing. So
+        # putting these straight in a step's `env:` sets `APPLE_CERTIFICATE=""`, Tauri sees a
+        # variable that is present, tries to sign, and `security import` fails on an empty
+        # certificate. That is exactly what killed the v0.1.0 release: the universal binary
+        # built fine and then bundling died with
+        # "SecKeychainItemImport: One or more parameters passed to a function were not valid".
+        #
+        # Empty is not absent. This is the third time that distinction has cost this project
+        # something, after `CLAUDE_CONFIG_DIR` and a profile's environment overrides, which is
+        # why `runtime::apply_env` removes an empty value rather than setting it.
+        #
+        # So the variables are exported only when there is really a certificate. With no
+        # secrets, nothing is set and Tauri does not attempt to codesign at all.
         env:
-          # Signing is skipped when the secrets are absent, so a fork still produces a
-          # working artefact — just an unsigned one, which the release notes state
-          # plainly rather than leaving a user to discover it at launch.
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+        run: |
+          if [ -n "${CERT:-}" ]; then
+            echo "signing=1" >> "$GITHUB_OUTPUT"
+            echo "A signing certificate is present; the bundle will be signed."
+          else
+            echo "signing=0" >> "$GITHUB_OUTPUT"
+            echo "No signing certificate. Building unsigned, which is the intended default:"
+            echo "  macOS applies quarantine in the downloading application, so the curl"
+            echo "  installer and npx open with no Gatekeeper dialog regardless."
+          fi
+
+      - name: Build (unsigned)
+        if: steps.certcheck.outputs.signing != '1'
+        # No Apple variables in the environment at all, which is the whole point.
+        run: pnpm exec tauri build --target universal-apple-darwin --bundles app,dmg
+
+      - name: Build (signed)
+        if: steps.certcheck.outputs.signing == '1'
+        env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -95,10 +128,10 @@ jobs:
           if codesign -dv --verbose=2 "$APP" 2>&1 | grep -q "Authority=Developer ID"; then
             echo "signed=true" >> "$GITHUB_OUTPUT"
             spctl -a -vvv -t install "$APP" 2>&1 || \
-              echo "::warning::signed but not notarised — a browser download will still be warned about"
+              echo "::warning::signed but not notarised, so a browser download will still be warned about"
           else
             echo "signed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::unsigned. Browser and Homebrew-cask installs hit Gatekeeper; npx and the source formula do not."
+            echo "::warning::unsigned, which is intended. A browser download of the .dmg and a Homebrew cask install hit Gatekeeper; the curl installer, npx, and the source formula do not, because macOS applies quarantine in the downloading application."
           fi
 
       - name: Tarball for the npm and curl routes
@@ -174,9 +207,17 @@ jobs:
             brew install --formula tervin
             ```
 
-            **Signed with a Developer ID:** `${{ steps.signing.outputs.signed }}`
+            **Signed with a Developer ID:** `${{ steps.signing.outputs.signed }}`, and for
+            Tervin that is expected to say `false`. Signing is deliberately not done
+            ([why](https://github.com/QuintinBotes/tervin/blob/main/SECURITY.md#why-unsigned-is-a-decision-not-a-gap)),
+            so verifying the checksum is the actual check, not a formality:
 
-            Verify any download against `SHA256SUMS.txt`.
+            ```sh
+            shasum -a 256 -c SHA256SUMS.txt
+            ```
+
+            Do **not** run `xattr -d com.apple.quarantine`. If a route you chose warns,
+            use right-click then Open once, or use one of the routes above that never warns.
           files: |
             target/universal-apple-darwin/release/bundle/dmg/*.dmg
             target/universal-apple-darwin/release/bundle/dmg/*.tar.gz

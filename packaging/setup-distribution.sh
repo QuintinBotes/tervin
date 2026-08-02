@@ -13,6 +13,9 @@ REPO="QuintinBotes/tervin"
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 ok()  { printf '  \xe2\x9c\x93 %s\n' "$*"; }
 todo(){ printf '  \xe2\x86\x92 %s\n' "$*"; }
+# A deliberate non-configuration, so it reads as settled rather than outstanding. Using
+# todo() here would put "signing" on a checklist it is never coming off.
+note(){ printf '  \xc2\xb7 %s\n' "$*"; }
 
 command -v gh >/dev/null || {
   echo "This needs the GitHub CLI: brew install gh && gh auth login"
@@ -78,26 +81,28 @@ have() { echo "$existing" | grep -qx "$1"; }
 if have NPM_TOKEN; then
   ok "NPM_TOKEN set"
 else
-  todo "NPM_TOKEN — an npm automation token (npmjs.com › Access Tokens › Granular, publish scope)"
+  todo "NPM_TOKEN: an npm automation token (npmjs.com › Access Tokens › Granular, publish scope)"
   todo "  gh secret set NPM_TOKEN --repo $REPO"
 fi
 
 if have TAP_DEPLOY_KEY; then
   ok "TAP_DEPLOY_KEY set"
 else
-  todo "TAP_DEPLOY_KEY — the private half of the read-write deploy key above"
+  todo "TAP_DEPLOY_KEY: the private half of the read-write deploy key above"
 fi
 
-# Signing is genuinely optional: npx and the source formula are unaffected by it, and
-# the release says plainly when a build is unsigned.
+# Signing is deliberately not done, so its absence is reported as a decision rather than
+# as an outstanding task. A fork with a Developer ID can still set these and the release
+# workflow will use them. See SECURITY.md for why Tervin itself does not.
 if have APPLE_SIGNING_IDENTITY; then
   ok "Apple signing configured"
 else
-  todo "Apple signing is NOT configured (optional)"
-  todo "  Without it: npx and 'brew install --formula' still open with no prompt."
-  todo "  The .dmg and the cask will ask for one-time approval in System Settings."
-  todo "  To enable, set: APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD"
-  todo "                  APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID"
+  note "Apple signing not configured, which is intended and not a missing step."
+  note "  npx, the curl installer, and 'brew install --formula' open with no prompt"
+  note "  regardless, because quarantine is set by the downloading application."
+  note "  Only a browser-downloaded .dmg and the cask ask for approval."
+  note "  A fork with a Developer ID can set: APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD"
+  note "                  APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID"
 fi
 
 say "5. Releasing"

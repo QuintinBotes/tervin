@@ -132,8 +132,21 @@ pnpm exec tauri build --bundles app --no-bundle
 
 **On Gatekeeper:** a build you made yourself is not quarantined and opens without any
 dialog. A `.dmg` downloaded through a browser *is* quarantined, because macOS applies
-`com.apple.quarantine` in the downloading application. That is why signing is still an open
-item and why `npx tervin` is the recommended install route.
+`com.apple.quarantine` in the downloading application, not in the kernel.
+
+That last detail is the whole reason Tervin is not signed and will not be. Quarantine comes
+from the downloader, so `curl`, the installer script, and `npm` never set it: they set only
+`com.apple.provenance`, which Gatekeeper does not act on. Verified with `xattr` on real
+downloads through each route. So the routes Tervin recommends already open without a dialog,
+and a $99/year Apple Developer ID would buy a better experience for exactly one route, the
+browser-downloaded `.dmg`, which is the route the README names as the worst one. Signing is
+listed in [COMPETITIVE-SPEC.md](COMPETITIVE-SPEC.md) §5 among the things to refuse to build.
+
+Verify a download yourself, which is the actual security boundary:
+
+```sh
+shasum -a 256 -c SHA256SUMS.txt
+```
 
 ---
 
