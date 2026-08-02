@@ -765,6 +765,27 @@ export const workspaceSave = (id: string, name: string, json: string) =>
 export const workspaceLoad = (id: string) =>
   invoke<string | null>("workspace_load", { id });
 
+/**
+ * Save a pane's visible history, keyed by the pane id the session records.
+ *
+ * `program` is stored alongside it so a load cannot hand a local shell's output to what
+ * is now an SSH session.
+ */
+export const scrollbackSave = (
+  paneKey: string,
+  program: string | null,
+  cwd: string | null,
+  body: string,
+) => invoke<void>("scrollback_save", { paneKey, program, cwd, body });
+
+/** Load a pane's saved history. Null when none was saved, or the program differs. */
+export const scrollbackLoad = (paneKey: string, program: string | null) =>
+  invoke<string | null>("scrollback_load", { paneKey, program });
+
+/** Forget saved history for panes the session no longer contains. */
+export const scrollbackRetain = (paneKeys: string[]) =>
+  invoke<number>("scrollback_retain", { paneKeys });
+
 export const setProjectRoot = (path: string) =>
   invoke<string>("set_project_root", { path });
 
