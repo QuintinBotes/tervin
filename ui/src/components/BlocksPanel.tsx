@@ -151,6 +151,13 @@ function BlockRow({
         {block.error_count > 0 && (
           <span className="chip tone-red tabular">{block.error_count} errors</span>
         )}
+        {/* Who ran it. In a mixed list this is the difference between "I did that" and
+            "an agent did that", which changes how a failure is read. */}
+        {block.thread_id !== null && (
+          <span className="chip" title="Run by an agent, not typed in a pane">
+            agent
+          </span>
+        )}
         {block.ports.length > 0 && (
           <span className="chip tabular" title="Ports mentioned in output">
             :{block.ports[0]}
@@ -199,12 +206,28 @@ function BlockRow({
             <span className="tabular">{new Date(block.started_at).toLocaleString()}</span>
             <span className="truncate" title={block.cwd}>{block.cwd}</span>
             {block.git_branch && <span>{block.git_branch}</span>}
-            {block.exit_code !== null && (
+            {block.exit_code !== null ? (
               <span className="tabular">exit {block.exit_code}</span>
+            ) : (
+              block.thread_id !== null &&
+              block.status !== "running" && (
+                // An agent ran this, and its runtime reported success or failure without
+                // a status. Saying so is better than an absent field someone reads as a
+                // rendering bug — and far better than a number nobody reported.
+                <span title="The runtime reported the outcome but not an exit status">
+                  no exit status reported
+                </span>
+              )
             )}
             <span className="tabular">{formatBytes(block.output_total)}</span>
             {block.output_truncated && (
-              <span className="tone-amber">output truncated at the capture limit</span>
+              <span className="tone-amber">
+                {block.thread_id !== null
+                  ? // A different reason from a shell Block's, and the wrong one would
+                    // send someone looking for a capture setting that is not involved.
+                    "excerpt only — the runtime reports a bounded sample, not the full log"
+                  : "output truncated at the capture limit"}
+              </span>
             )}
           </div>
 
