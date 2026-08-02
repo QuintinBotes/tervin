@@ -7,7 +7,7 @@
 Every command below was run on a clean checkout before being written down. None of it is
 copied from memory.
 
-**The thing worth understanding first:** 844 tests pass, and that is not the same as the
+**The thing worth understanding first:** 999 tests pass, and that is not the same as the
 product being correct. Tervin is a GUI driving real PTYs. The suite deliberately avoids
 mocking the thing under test, which is why it catches a great deal, but a test cannot tell
 you whether the terminal *feels* right, whether an agent Thread reads clearly, or whether a
@@ -41,8 +41,8 @@ What you need, with the versions this was verified against:
 Run all of it. Roughly two minutes cold, well under one warm.
 
 ```sh
-cargo test --workspace          # 644 tests
-pnpm exec vitest run            # 200 tests
+cargo test --workspace          # 680 tests
+pnpm exec vitest run            # 319 tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 pnpm exec tsc --noEmit
@@ -51,9 +51,9 @@ pnpm exec tsc --noEmit
 Expected, verified on a clean checkout at v0.1.0:
 
 ```
-rust: 644 passed, 0 failed
-Test Files  8 passed (8)
-     Tests  200 passed (200)
+rust: 680 passed, 0 failed
+Test Files  9 passed (9)
+     Tests  319 passed (319)
 ```
 
 If any number is *lower* than that, something is wrong: a suite has been skipped or a file
@@ -78,6 +78,11 @@ This is not a mocked suite, which is why it is worth running:
 - **Real generated SSH keys** for the agent-key fingerprint comparison, because a fixture
   cannot prove `ssh-keygen` and `ssh-add` agree on a fingerprint.
 - **A database built with the old schema**, then opened with current code, for the migration.
+- **The shipped `claude` binary itself** for the instruction-file readership table. Which
+  files a runtime reads is a claim about someone else's software, so it was read out of the
+  binary rather than taken from documentation. The table then exists twice, in Rust and in
+  the UI, and a generated fixture both sides assert against means neither can drift
+  silently. Verified by breaking each side in turn and confirming the test fails.
 
 ### The one test that needs a real Claude Code
 
@@ -200,6 +205,21 @@ looks like, so a wrong result is unambiguous.
       prompt. It has no composer, and explains that Tervin cannot drive a session it did not
       start. Type in the pane instead.
 - [ ] History, Prompts. Your pane-typed prompt is searchable.
+
+### 4.4b Instructions this project already carries
+
+- [ ] Settings, Agents. The top block lists any `AGENTS.md`, `CLAUDE.md`, Cursor or Copilot
+      instructions in the project, with the directory each governs and its size.
+- [ ] Switch *Reading as* between Claude Code and Codex. **`CLAUDE.md` changes from "in
+      force" to "not read".** That is the whole point of the panel: the file did not move,
+      the runtime did.
+- [ ] Hover "in force". It states how that is known, naming the version it was verified
+      against, rather than simply asserting it.
+- [ ] Pick *A local model*. Everything becomes "Tervin can pass in", because a
+      conversational endpoint reads no files. Nothing says "in force", because Tervin has
+      not passed anything in yet.
+- [ ] In a project with no instruction files, it says so plainly and suggests `AGENTS.md`
+      rather than showing an empty box.
 
 ### 4.5 The pickers
 

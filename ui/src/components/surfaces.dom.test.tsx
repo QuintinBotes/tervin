@@ -25,6 +25,7 @@ import { GitPanel } from "./GitPanel";
 import { ConnectionsPanel } from "./ConnectionsPanel";
 import { SavedCommands } from "./SavedCommands";
 import { CommandHistory } from "./CommandHistory";
+import { ProjectInstructions } from "./ProjectInstructions";
 
 /** A Block, with every field overridable so a test can make one awkward. */
 function block(over: Partial<api.BlockSummary> = {}): api.BlockSummary {
@@ -800,5 +801,131 @@ describe("ConnectionsPanel", () => {
     expect(container.textContent).toContain("work");
     // A warning about a config it could not fully read must not be swallowed.
     expect(container.textContent).toContain("Include");
+  });
+});
+
+describe("ProjectInstructions", () => {
+  /** Discovery output, with every field overridable so a test can make it awkward. */
+  function found(
+    over: Partial<api.ProjectInstructions> = {},
+  ): api.ProjectInstructions {
+    return {
+      project_root: "~/Projects/thing",
+      discovered: {
+        files: [
+          {
+            path: "/p/AGENTS.md",
+            kind: "agents",
+            scope: { scope: "project_root" },
+            bytes: 16078,
+          },
+          {
+            path: "/p/.cursorrules",
+            kind: "cursor_rules",
+            scope: { scope: "project_root" },
+            bytes: 512,
+          },
+        ],
+        mcp: [],
+        truncated: false,
+      },
+      adoptable: [],
+      ...over,
+    };
+  }
+
+  it("says which files the chosen runtime obeys and which it ignores", async () => {
+    vi.spyOn(api, "projectInstructions").mockResolvedValue(found());
+    const { findByText, getAllByText } = render(<ProjectInstructions />);
+
+    // Claude Code is the default when no Thread is running.
+    expect(await findByText("AGENTS.md")).toBeTruthy();
+    expect(getAllByText("in force").length).toBe(1);
+    // The Cursor rules file is present but not read, and saying so is the point.
+    expect(getAllByText("not read").length).toBe(1);
+  });
+
+  it("renders a nested file with the directory it governs, not just its name", async () => {
+    // Three nested CLAUDE.md files would otherwise be three identical rows.
+    vi.spyOn(api, "projectInstructions").mockResolvedValue(
+      found({
+        discovered: {
+          files: [
+            {
+              path: "/p/crates/engine/CLAUDE.md",
+              kind: "claude_md",
+              scope: { scope: "nested", relative_dir: "crates/engine" },
+              bytes: 900,
+            },
+          ],
+          mcp: [],
+          truncated: false,
+        },
+      }),
+    );
+    const { findByText } = render(<ProjectInstructions />);
+    expect(await findByText(/crates\/engine/)).toBeTruthy();
+  });
+
+  it("reports an unparseable MCP config rather than hiding it", async () => {
+    // A runtime that silently ignores its own broken config leaves a user with
+    // nothing to go on, which is the whole reason the error is carried through.
+    vi.spyOn(api, "projectInstructions").mockResolvedValue(
+      found({
+        discovered: {
+          files: [],
+          mcp: [
+            {
+              path: "/p/.mcp.json",
+              kind: "project_mcp_json",
+              servers: [],
+              error: "not valid JSON: expected value at line 1 column 3",
+            },
+          ],
+          truncated: false,
+        },
+      }),
+    );
+    const { findByText } = render(<ProjectInstructions />);
+    expect(await findByText(/could not be parsed/)).toBeTruthy();
+  });
+
+  it("does not present a capped search as a complete list", async () => {
+    vi.spyOn(api, "projectInstructions").mockResolvedValue(
+      found({ discovered: { files: [], mcp: [], truncated: true } }),
+    );
+    const { findByText } = render(<ProjectInstructions />);
+    expect(await findByText(/capped/)).toBeTruthy();
+  });
+
+  it("says an adoption would replace a server Tervin already has", async () => {
+    vi.spyOn(api, "projectInstructions").mockResolvedValue(
+      found({
+        adoptable: [
+          { name: "github", source: "/p/.mcp.json (the .mcp.json convention)", conflicts: true },
+          { name: "sentry", source: "/p/.mcp.json (the .mcp.json convention)", conflicts: false },
+        ],
+      }),
+    );
+    const { findByText, queryByText } = render(<ProjectInstructions />);
+    expect(await findByText(/already has this name/)).toBeTruthy();
+    // And does not say it about the one that is genuinely new.
+    expect(queryByText("sentry")).toBeTruthy();
+  });
+
+  it("explains itself rather than throwing when the project cannot be read", async () => {
+    vi.spyOn(api, "projectInstructions").mockRejectedValue(
+      new Error("permission denied"),
+    );
+    const { findByText } = render(<ProjectInstructions />);
+    expect(await findByText(/permission denied/)).toBeTruthy();
+  });
+
+  it("renders an empty project without claiming anything was found", async () => {
+    vi.spyOn(api, "projectInstructions").mockResolvedValue(
+      found({ discovered: { files: [], mcp: [], truncated: false } }),
+    );
+    const { findByText } = render(<ProjectInstructions />);
+    expect(await findByText(/No instruction files here/)).toBeTruthy();
   });
 });

@@ -397,15 +397,27 @@ agent is *allowed* to do.
 run, so attribution is a fact rather than an inference.
 
 ### 4.2 Read what the ecosystem already writes
-`P1.` Cheap interoperability that Tervin currently declines:
+`P1.` **Discovery and reporting are now built** (`crates/agent-runtime/src/instructions.rs`,
+surfaced in Settings, Agents). Passing a file into a runtime that reads none is specified
+here and not yet built. Cheap interoperability that Tervin used to decline:
 
-- **`AGENTS.md`**: read by 30+ tools, 60,000+ repositories. Tervin should read it, show it in
-  the Bridge panel as the instructions in force, and pass it to runtimes that do not read it
-  themselves.
-- **`CLAUDE.md`, `.cursorrules`, `.github/copilot-instructions.md`**: the same, reported
-  rather than merged, so a user can see which files an agent is actually obeying.
-- **Existing MCP config** (`.mcp.json`, `.claude.json`, `.codex/`): Warp auto-discovers these.
-  Tervin has its own `mcpServers` file and should adopt whatever is already there.
+- **`AGENTS.md`**: read by 30+ tools, 60,000+ repositories. **Done**, with one correction to
+  the assumption above: Claude Code reads `AGENTS.md` *natively*. The shipped binary contains
+  "Claude Code hardcodes CLAUDE.md / AGENTS.md discovery", so passing it in would duplicate
+  the instructions rather than supply them. Only runtimes that read nothing, the local model
+  endpoints, are candidates for injection, and that half is still to build.
+- **`CLAUDE.md`, `.cursorrules`, `.github/copilot-instructions.md`**: **done**, reported
+  rather than merged, per runtime. Note that Claude Code's binary *mentions* `.cursorrules`
+  and the Copilot file, but only inside its `/init` prompt and its migration adapter rather
+  than in discovery, so those are reported as ignored. A mention is not a readership, and
+  conflating the two would tell a user their Cursor rules are in force when they are not.
+- **Existing MCP config** (`.mcp.json`, `.claude.json`, `.codex/`): **discovery done**,
+  including that Codex spells the key `mcp_servers` rather than `mcpServers`, and that
+  `~/.claude.json` nests servers under a project key so a top-level lookup finds none.
+  Server *names* only: an MCP entry routinely holds an API key in `env`, and reading one to
+  render a list would be gratuitous. Adoption is *offered* with the source named and a
+  warning when it would replace an existing entry, never applied automatically, because
+  copying a server genuinely adds tools to an ACP agent.
 
 *Exit criteria:* the Bridge panel lists every instruction source and MCP server in force, per
 runtime, with the file it came from. A file Tervin found but a runtime will not read is shown

@@ -1,0 +1,351 @@
+{
+  "aider": {
+    "agents": {
+      "readership": "unknown"
+    },
+    "claude_local": {
+      "readership": "unknown"
+    },
+    "claude_md": {
+      "readership": "unknown"
+    },
+    "cline_rules": {
+      "readership": "unknown"
+    },
+    "copilot_instructions": {
+      "readership": "unknown"
+    },
+    "cursor_rules": {
+      "readership": "unknown"
+    },
+    "gemini_md": {
+      "readership": "unknown"
+    },
+    "windsurf_rules": {
+      "readership": "unknown"
+    }
+  },
+  "an-agent-tervin-has-never-heard-of": {
+    "agents": {
+      "readership": "unknown"
+    },
+    "claude_local": {
+      "readership": "unknown"
+    },
+    "claude_md": {
+      "readership": "unknown"
+    },
+    "cline_rules": {
+      "readership": "unknown"
+    },
+    "copilot_instructions": {
+      "readership": "unknown"
+    },
+    "cursor_rules": {
+      "readership": "unknown"
+    },
+    "gemini_md": {
+      "readership": "unknown"
+    },
+    "windsurf_rules": {
+      "readership": "unknown"
+    }
+  },
+  "claude-code": {
+    "agents": {
+      "evidence": "Claude Code hardcodes CLAUDE.md / AGENTS.md discovery (verified in 2.1.220)",
+      "readership": "native"
+    },
+    "claude_local": {
+      "evidence": "Claude Code hardcodes CLAUDE.md / AGENTS.md discovery (verified in 2.1.220)",
+      "readership": "native"
+    },
+    "claude_md": {
+      "evidence": "Claude Code hardcodes CLAUDE.md / AGENTS.md discovery (verified in 2.1.220)",
+      "readership": "native"
+    },
+    "cline_rules": {
+      "readership": "ignored"
+    },
+    "copilot_instructions": {
+      "readership": "ignored"
+    },
+    "cursor_rules": {
+      "readership": "ignored"
+    },
+    "gemini_md": {
+      "readership": "ignored"
+    },
+    "windsurf_rules": {
+      "readership": "ignored"
+    }
+  },
+  "claude-code-acp": {
+    "agents": {
+      "evidence": "Claude Code hardcodes CLAUDE.md / AGENTS.md discovery (verified in 2.1.220)",
+      "readership": "native"
+    },
+    "claude_local": {
+      "evidence": "Claude Code hardcodes CLAUDE.md / AGENTS.md discovery (verified in 2.1.220)",
+      "readership": "native"
+    },
+    "claude_md": {
+      "evidence": "Claude Code hardcodes CLAUDE.md / AGENTS.md discovery (verified in 2.1.220)",
+      "readership": "native"
+    },
+    "cline_rules": {
+      "readership": "ignored"
+    },
+    "copilot_instructions": {
+      "readership": "ignored"
+    },
+    "cursor_rules": {
+      "readership": "ignored"
+    },
+    "gemini_md": {
+      "readership": "ignored"
+    },
+    "windsurf_rules": {
+      "readership": "ignored"
+    }
+  },
+  "codex": {
+    "agents": {
+      "evidence": "Codex reads AGENTS.md as its instruction file",
+      "readership": "native"
+    },
+    "claude_local": {
+      "readership": "ignored"
+    },
+    "claude_md": {
+      "readership": "ignored"
+    },
+    "cline_rules": {
+      "readership": "ignored"
+    },
+    "copilot_instructions": {
+      "readership": "ignored"
+    },
+    "cursor_rules": {
+      "readership": "ignored"
+    },
+    "gemini_md": {
+      "readership": "ignored"
+    },
+    "windsurf_rules": {
+      "readership": "ignored"
+    }
+  },
+  "copilot-acp": {
+    "agents": {
+      "readership": "ignored"
+    },
+    "claude_local": {
+      "readership": "ignored"
+    },
+    "claude_md": {
+      "readership": "ignored"
+    },
+    "cline_rules": {
+      "readership": "ignored"
+    },
+    "copilot_instructions": {
+      "evidence": "Copilot reads .github/copilot-instructions.md",
+      "readership": "native"
+    },
+    "cursor_rules": {
+      "readership": "ignored"
+    },
+    "gemini_md": {
+      "readership": "ignored"
+    },
+    "windsurf_rules": {
+      "readership": "ignored"
+    }
+  },
+  "cursor-agent": {
+    "agents": {
+      "readership": "ignored"
+    },
+    "claude_local": {
+      "readership": "ignored"
+    },
+    "claude_md": {
+      "readership": "ignored"
+    },
+    "cline_rules": {
+      "readership": "ignored"
+    },
+    "copilot_instructions": {
+      "readership": "ignored"
+    },
+    "cursor_rules": {
+      "evidence": "Cursor reads .cursorrules and .cursor/rules/",
+      "readership": "native"
+    },
+    "gemini_md": {
+      "readership": "ignored"
+    },
+    "windsurf_rules": {
+      "readership": "ignored"
+    }
+  },
+  "gemini": {
+    "agents": {
+      "readership": "ignored"
+    },
+    "claude_local": {
+      "readership": "ignored"
+    },
+    "claude_md": {
+      "readership": "ignored"
+    },
+    "cline_rules": {
+      "readership": "ignored"
+    },
+    "copilot_instructions": {
+      "readership": "ignored"
+    },
+    "cursor_rules": {
+      "readership": "ignored"
+    },
+    "gemini_md": {
+      "evidence": "Gemini CLI reads GEMINI.md as its context file",
+      "readership": "native"
+    },
+    "windsurf_rules": {
+      "readership": "ignored"
+    }
+  },
+  "gemini-acp": {
+    "agents": {
+      "readership": "ignored"
+    },
+    "claude_local": {
+      "readership": "ignored"
+    },
+    "claude_md": {
+      "readership": "ignored"
+    },
+    "cline_rules": {
+      "readership": "ignored"
+    },
+    "copilot_instructions": {
+      "readership": "ignored"
+    },
+    "cursor_rules": {
+      "readership": "ignored"
+    },
+    "gemini_md": {
+      "evidence": "Gemini CLI reads GEMINI.md as its context file",
+      "readership": "native"
+    },
+    "windsurf_rules": {
+      "readership": "ignored"
+    }
+  },
+  "llamacpp": {
+    "agents": {
+      "readership": "injectable"
+    },
+    "claude_local": {
+      "readership": "injectable"
+    },
+    "claude_md": {
+      "readership": "injectable"
+    },
+    "cline_rules": {
+      "readership": "injectable"
+    },
+    "copilot_instructions": {
+      "readership": "injectable"
+    },
+    "cursor_rules": {
+      "readership": "injectable"
+    },
+    "gemini_md": {
+      "readership": "injectable"
+    },
+    "windsurf_rules": {
+      "readership": "injectable"
+    }
+  },
+  "lmstudio": {
+    "agents": {
+      "readership": "injectable"
+    },
+    "claude_local": {
+      "readership": "injectable"
+    },
+    "claude_md": {
+      "readership": "injectable"
+    },
+    "cline_rules": {
+      "readership": "injectable"
+    },
+    "copilot_instructions": {
+      "readership": "injectable"
+    },
+    "cursor_rules": {
+      "readership": "injectable"
+    },
+    "gemini_md": {
+      "readership": "injectable"
+    },
+    "windsurf_rules": {
+      "readership": "injectable"
+    }
+  },
+  "ollama": {
+    "agents": {
+      "readership": "injectable"
+    },
+    "claude_local": {
+      "readership": "injectable"
+    },
+    "claude_md": {
+      "readership": "injectable"
+    },
+    "cline_rules": {
+      "readership": "injectable"
+    },
+    "copilot_instructions": {
+      "readership": "injectable"
+    },
+    "cursor_rules": {
+      "readership": "injectable"
+    },
+    "gemini_md": {
+      "readership": "injectable"
+    },
+    "windsurf_rules": {
+      "readership": "injectable"
+    }
+  },
+  "vllm": {
+    "agents": {
+      "readership": "injectable"
+    },
+    "claude_local": {
+      "readership": "injectable"
+    },
+    "claude_md": {
+      "readership": "injectable"
+    },
+    "cline_rules": {
+      "readership": "injectable"
+    },
+    "copilot_instructions": {
+      "readership": "injectable"
+    },
+    "cursor_rules": {
+      "readership": "injectable"
+    },
+    "gemini_md": {
+      "readership": "injectable"
+    },
+    "windsurf_rules": {
+      "readership": "injectable"
+    }
+  }
+}

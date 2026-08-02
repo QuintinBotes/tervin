@@ -298,6 +298,79 @@ export interface AgentsOverview {
   mcp_path: string;
 }
 
+/** A kind of instruction file, named after the tool that established it. */
+export type InstructionKind =
+  | "agents"
+  | "claude_md"
+  | "claude_local"
+  | "cursor_rules"
+  | "copilot_instructions"
+  | "gemini_md"
+  | "windsurf_rules"
+  | "cline_rules";
+
+export type InstructionScope =
+  | { scope: "user" }
+  | { scope: "project_root" }
+  | { scope: "nested"; relative_dir: string };
+
+export interface InstructionFile {
+  path: string;
+  kind: InstructionKind;
+  scope: InstructionScope;
+  bytes: number;
+}
+
+/**
+ * Whether a runtime will actually read a file Tervin found.
+ *
+ * `unknown` is a real answer, not a placeholder: a generic ACP agent may read
+ * anything or nothing, and guessing would be worse than saying so.
+ */
+export type Readership =
+  | { readership: "native"; evidence: string }
+  | { readership: "ignored" }
+  | { readership: "injectable" }
+  | { readership: "unknown" };
+
+export interface InForce {
+  file: InstructionFile;
+  readership: Readership;
+}
+
+export type McpConfigKind =
+  | "project_mcp_json"
+  | "claude_json"
+  | "codex_toml"
+  | "gemini_settings";
+
+export interface McpConfigFile {
+  path: string;
+  kind: McpConfigKind;
+  /** Names only. Commands and environment are deliberately never read. */
+  servers: string[];
+  error: string | null;
+}
+
+export interface DiscoveredInstructions {
+  files: InstructionFile[];
+  mcp: McpConfigFile[];
+  /** True when the search was capped, so the list is a sample rather than all of it. */
+  truncated: boolean;
+}
+
+export interface McpAdoption {
+  name: string;
+  source: string;
+  conflicts: boolean;
+}
+
+export interface ProjectInstructions {
+  discovered: DiscoveredInstructions;
+  adoptable: McpAdoption[];
+  project_root: string;
+}
+
 export interface PermissionState {
   mode: string;
   tervin_can_intercept: boolean;
@@ -637,6 +710,10 @@ export const auditRecent = (limit: number) =>
 // ----------------------------------------------------------------- agents
 
 export const agentsOverview = () => invoke<AgentsOverview>("agents_overview");
+
+/** Instruction files and MCP config other tools already wrote into this project. */
+export const projectInstructions = () =>
+  invoke<ProjectInstructions>("project_instructions");
 
 export const agentsSaveProfiles = (
   profiles: AgentProfile[],
