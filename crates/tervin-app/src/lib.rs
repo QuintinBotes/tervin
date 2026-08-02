@@ -5,6 +5,7 @@
 //! this one is wiring.
 
 pub mod commands;
+pub mod pane_agents;
 pub mod state;
 
 use parking_lot::RwLock;
