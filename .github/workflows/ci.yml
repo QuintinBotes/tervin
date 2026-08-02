@@ -57,23 +57,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: 22
+          cache: pnpm
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
       - name: Types
         # The tsconfig is at the repository root and already scopes itself to ui/.
         # `-p ui` looks for a config that is not there and fails.
-        run: npx tsc --noEmit
+        run: pnpm exec tsc --noEmit
 
       - name: Tests
-        run: npx vitest run
+        run: pnpm exec vitest run
 
       - name: Build
-        run: npx vite build
+        run: pnpm exec vite build
 
   bundle:
     # Proves the thing users actually install still builds. Not gated on the other
@@ -83,10 +85,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
       - name: Bundle the app
-        run: npx tauri build --bundles app
+        run: pnpm exec tauri build --bundles app

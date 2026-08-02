@@ -37,12 +37,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: 22
+          cache: pnpm
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
       - name: Version
         id: version
@@ -68,7 +70,7 @@ jobs:
           cargo fmt --all --check
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
-          npx vitest run
+          pnpm exec vitest run
 
       - name: Build
         env:
@@ -81,7 +83,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npx tauri build --target universal-apple-darwin --bundles app,dmg
+        run: pnpm exec tauri build --target universal-apple-darwin --bundles app,dmg
 
       - name: Signing status
         id: signing
