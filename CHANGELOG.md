@@ -12,17 +12,17 @@ so this is a record of what has been built rather than of what anyone can instal
 
 - Half the commands anyone runs are a shape with one thing different: deploy to *this*
   environment, tail *that* service. Shell history gives you the last one you happened to
-  type, which is the wrong instance of the shape more often than not — so people keep a
+  type, which is the wrong instance of the shape more often than not, so people keep a
   scratch file and copy out of it. **⌘⇧S is that file**, with the holes made explicit:
   `kubectl logs -f {{service}} --namespace {{env:staging}}`.
 - **It fills in and does not run.** A saved command is often the destructive kind, and
   seeing the filled-in line before sending it is the whole safeguard.
 - **A hole left blank stays visible in the command.** `rm -rf {{path}}` with nothing filled
-  in must not become `rm -rf` — a command that fails loudly beats one that runs with an
+  in must not become `rm -rf`: a command that fails loudly beats one that runs with an
   argument silently missing.
 - **The parser is deliberately narrow.** A hole is exactly `{{name}}` or
   `{{name:default}}`. `${HOME}`, `awk '{print $1}'`, a JSON body and `mv x.{txt,md}` are
-  ordinary text and survive byte for byte — treating any brace as a hole would corrupt the
+  ordinary text and survive byte for byte: treating any brace as a hole would corrupt the
   command someone saved, and they would only find out when it ran.
 - Parsing and rendering happen in Rust, not in the UI. A second implementation would
   eventually disagree about `${HOME}`, and the disagreement would be a broken command.
@@ -45,7 +45,7 @@ so this is a record of what has been built rather than of what anyone can instal
 
 ### Fixed: a pane's directory never updated after it opened
 
-`pane://cwd` had been emitted since Blocks existed and nothing listened to it — and
+`pane://cwd` had been emitted since Blocks existed and nothing listened to it, and
 `BlockEvent::CwdChanged` did not carry a pane id, so nothing *could*. A pane's directory
 stayed whatever it was when it spawned, which made the status rail stale, saved the wrong
 directory into a restored session, and made per-pane completion impossible.
@@ -60,10 +60,10 @@ directory, so `@src/…` in a split means that pane's `src` rather than the proj
 - **It does not claim an exit code unless a runtime reported one.** An ACP terminal
   reports a real status; Claude Code reports success or failure and nothing more, and the
   0/1/130 on its events is Tervin's inference. A Block from the latter carries no number
-  and says *"no exit status reported"* — because an exit code is the one field people read
+  and says *"no exit status reported"*: because an exit code is the one field people read
   as fact, and a fabricated one is worse than an admitted gap.
 - **It says the log is partial, and for the right reason.** Adapters pass a bounded
-  excerpt, which is a different thing from a shell Block hitting the capture limit —
+  excerpt, which is a different thing from a shell Block hitting the capture limit:
   showing the wrong reason would send someone looking for a setting that is not involved.
 - A Block an agent ran is **marked as such** in the list. In a mixed list that is the
   difference between "I did that" and "an agent did that", which changes how a failure
@@ -74,7 +74,7 @@ directory, so `@src/…` in a split means that pane's `src` rather than the proj
 
 ### Programs in a pane are told when the theme changes
 
-- Tervin ships fifteen themes, and switching between them is a normal thing to do — but
+- Tervin ships fifteen themes, and switching between them is a normal thing to do, but
   until now a program in a pane never learned the background had changed, so a
   light-theme editor stayed styled for a dark one.
 - DEC mode **2031** is now tracked per pane, `CSI ? 996 n` ("is your background light or
@@ -90,11 +90,11 @@ directory, so `@src/…` in a split means that pane's `src` rather than the proj
 ### The workspace comes back when you reopen it
 
 - **Tabs, splits, each pane's directory and its recent output are restored on launch.**
-  Losing the arrangement you built — four panes, each in the right place, one on a remote
-  host — is the cost that keeps people running tmux under a terminal that cannot do this.
+  Losing the arrangement you built, four panes, each in the right place, one on a remote
+  host, is the cost that keeps people running tmux under a terminal that cannot do this.
 - **The processes are not revived, and each pane says so.** They exited with the app. A
   restored pane starts a fresh shell below its old output, under a line reading *"restored
-  from your last session; nothing above is running"* — because a restored screen is
+  from your last session; nothing above is running"*: because a restored screen is
   otherwise indistinguishable from a live one, and someone could believe a command is
   still going.
 - Restored output is written straight to the terminal and never through the PTY, so
@@ -106,7 +106,7 @@ directory, so `@src/…` in a split means that pane's `src` rather than the proj
   and reopening it as a bare shell would be a different thing wearing its title. Those
   Threads are on disk and reachable from History.
 - Output is capped, kept in the same local database as Blocks, ages out on the same
-  retention window, and is **deleted the moment the setting is switched off** — which the
+  retention window, and is **deleted the moment the setting is switched off**, which the
   UI says at the time rather than leaving to be discovered.
 
 ### Agents you start yourself are now part of the workspace
@@ -115,14 +115,14 @@ directory, so `@src/…` in a split means that pane's `src` rather than the proj
   prompt, with the replies, tool calls and file changes on the timeline, and searchable
   in prompt history afterwards. Nothing to install and nothing to configure.
 - It works by reading `OSC 777;notify;warp://cli-agent`, which Claude Code already
-  emits, and then the transcript it already writes — the sequence and its fields were
+  emits, and then the transcript it already writes: the sequence and its fields were
   captured from a real PTY rather than taken from documentation. Verified that it is
   *not* gated on `TERM_PROGRAM`, so Tervin setting its own does not suppress it.
 - **An observed session is read-only, and says so.** Tervin has no channel to a process
   it did not spawn, so the Thread shows an explanation instead of a composer rather than
   a text box that silently does nothing.
 - Only the interactive TUI announces itself; `claude -p` in a pane is a Block like any
-  other command. And Tervin Rules do not gate a session you started by hand — that gate
+  other command. And Tervin Rules do not gate a session you started by hand: that gate
   is installed when Tervin launches the agent.
 - Any agent adopting the same envelope is picked up the same way.
 - A desktop notification requested over OSC 777 is surfaced in Tervin's notice rail
@@ -132,7 +132,7 @@ directory, so `@src/…` in a split means that pane's `src` rather than the proj
 ### Every component is reachable, and tested where it mounts
 
 - A static test now fails the build if a component is imported nowhere. It caught
-  `GitPanel` and `ConnectionsPanel` — both complete, both unreachable, both the same
+  `GitPanel` and `ConnectionsPanel`: both complete, both unreachable, both the same
   shape as the crash that shipped in History. `GitPanel` now sits beside the diff in
   Review; `ConnectionsPanel` opens on `⌘⇧O`.
 - Surfaces are mounted in tests against the data that actually breaks rendering: null
@@ -142,14 +142,14 @@ directory, so `@src/…` in a split means that pane's `src` rather than the proj
 ### The permission gates became real
 
 - **Claude Code now has a genuine pre-execution gate**, through a `PreToolUse` hook that
-  answers over a Unix socket. A refusal stops the tool before it runs — verified against
+  answers over a Unix socket. A refusal stops the tool before it runs: verified against
   the real CLI, not against documentation.
 - Tervin **never answers `allow`** through a hook, only `deny` or `defer`. `allow` would
   skip Claude Code's own permission checks, and a safety feature that disables another
   safety feature is not one.
 - A capability is upgraded **by evidence, never by configuration**. `claude --help`
   states that settings files failing validation are silently ignored, so an installed
-  gate that has never fired is indistinguishable from no gate — and is reported as
+  gate that has never fired is indistinguishable from no gate, and is reported as
   unproven until it fires.
 - The hook gate **fails open** by design: any exit code but 2 is non-blocking, so an
   unreachable Tervin does not stop your work. The session's permission text says so, and
@@ -159,7 +159,7 @@ directory, so `@src/…` in a split means that pane's `src` rather than the proj
 ### One adapter for every ACP agent
 
 - Gemini CLI, GitHub Copilot CLI, Claude Code via the Zed bridge, and anything else
-  speaking the Agent Client Protocol — added from Settings by command line, with no
+  speaking the Agent Client Protocol: added from Settings by command line, with no
   release needed. Under ACP the agent *blocks* waiting for Tervin's answer, which is a
   stronger gate than a hook.
 - Tervin hosts the agent's filesystem and command work, confined to the project root
@@ -175,7 +175,7 @@ directory, so `@src/…` in a split means that pane's `src` rather than the proj
 
 ### Moving work between agents
 
-- **Hand off** turns a Thread into a briefing another agent can read — task, plan, files,
+- **Hand off** turns a Thread into a briefing another agent can read: task, plan, files,
   commands and exit codes, tests, open problems, and what was refused. It drops reasoning
   traces, because a receiving model reads a predecessor's thinking as established fact,
   and it states what it left out.
@@ -185,7 +185,7 @@ directory, so `@src/…` in a split means that pane's `src` rather than the proj
 - A **History surface**: every command searchable months later by its output as well as
   its text, which a shell's history cannot do.
 - **Agent prompts are searchable too**, with a 30-day retention window. Blocks are never
-  pruned — a command and its output stay useful for years, while a transcript does not.
+  pruned: a command and its output stay useful for years, while a transcript does not.
 
 ### Prompt editing
 
@@ -195,7 +195,7 @@ directory, so `@src/…` in a split means that pane's `src` rather than the proj
 ### Layout
 
 - The tab strip can live on any of the four sides, and `+` makes a tab rather than
-  splitting the current one — which used to make a tab look like it had been renamed.
+  splitting the current one, which used to make a tab look like it had been renamed.
 - A **file explorer**, lazily loaded. Clicking a file types its shell-quoted path into
   the focused pane rather than opening an editor.
 
@@ -206,18 +206,18 @@ directory, so `@src/…` in a split means that pane's `src` rather than the proj
   reads it. Five hypotheses were eliminated first: it is not in the Info.plist, no media
   framework is linked or loaded, it happens with the canvas renderer as well as WebGL,
   and a hardened runtime with no media entitlements does not stop it.
-- **Keystrokes reached the terminal while a dialog was open** — including `Return` in an
+- **Keystrokes reached the terminal while a dialog was open**: including `Return` in an
   approval sheet, which ran a command instead of answering a question about running one.
 - **`shutdown()` leaked the agent process.** `AsyncWrite::shutdown` does not close a
   child's stdin, so the agent never saw EOF and outlived the session.
 - **A profile's binary and arguments were ignored**, and empty environment values were
-  *set* rather than removed — so `CLAUDE_CONFIG_DIR=""` selected the wrong account and
+  *set* rather than removed, so `CLAUDE_CONFIG_DIR=""` selected the wrong account and
   produced a 401 that looked like an expired login.
 - **A deadlock in `permissions()`**: two `lock()` calls in one struct literal, where the
   temporaries live to the end of the statement and the lock is not reentrant.
 - A cancelled model turn hung forever if the server went quiet.
 - Fuzzy matching is **17× faster** on a specific query and **1.9× faster** on the worst
-  case — a subsequence prefilter plus reused scratch buffers. See docs/PERFORMANCE.md.
+  case: a subsequence prefilter plus reused scratch buffers. See docs/PERFORMANCE.md.
 
 ## 0.1.0
 
