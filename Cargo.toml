@@ -42,7 +42,7 @@ chrono = { version = "0.4", features = ["serde"] }
 parking_lot = "0.12"
 regex = "1"
 shell-words = "1"
-base64 = "0.22"
+base64 = "0.23"
 tracing = "0.1"
 
 [profile.dev]
