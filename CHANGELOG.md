@@ -5,6 +5,21 @@ log says what changed, and this is for what it means to someone using it.
 
 ## Unreleased
 
+### Programs in a pane are told when the theme changes
+
+- Tervin ships fifteen themes, and switching between them is a normal thing to do — but
+  until now a program in a pane never learned the background had changed, so a
+  light-theme editor stayed styled for a dark one.
+- DEC mode **2031** is now tracked per pane, `CSI ? 996 n` ("is your background light or
+  dark?") is answered, and a pane that subscribed is told when the theme changes.
+- The report goes **only** to programs that asked. Sending an unsolicited `CSI ? 997` to
+  a shell that never enabled the mode would put stray characters on its command line.
+- The scanner records queries rather than answering them, for the same reason it does not
+  answer an OSC 52 clipboard *read*: the reply travels back as input to the program, so it
+  belongs where the rest of Tervin's writes are made, not inside a byte tap.
+- Light or dark is read from the theme's own declaration rather than measured from its
+  background colour, because the theme's author already decided.
+
 ### The workspace comes back when you reopen it
 
 - **Tabs, splits, each pane's directory and its recent output are restored on launch.**

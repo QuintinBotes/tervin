@@ -9,7 +9,7 @@
 
 import { create } from "zustand";
 import * as api from "./api";
-import { DEFAULT_THEME_ID } from "../design/themes";
+import { DEFAULT_THEME_ID, findTheme } from "../design/themes";
 import {
   closePane as closePaneNode,
   leaf,
@@ -395,6 +395,22 @@ interface WorkspaceActions {
 
 const APPEARANCE_KEY = "appearance";
 
+/**
+ * Tell the backend whether the current theme is dark, so programs in a pane can be
+ * answered and, if they asked, told when it changes.
+ *
+ * Read from the theme's declared `appearance` rather than measured from its background:
+ * the theme's author already decided, and inferring it from a colour would disagree with
+ * them on the borderline ones.
+ *
+ * Best-effort. A program that never asked is unaffected, and one that did will ask again.
+ */
+function reportColorScheme(themeId: string): void {
+  // `findTheme` falls back to the default rather than returning nothing, so an unknown
+  // id still produces an honest answer instead of silence.
+  void api.colorSchemeSet(findTheme(themeId).appearance === "dark").catch(() => {});
+}
+
 let tabCounter = 0;
 const nextTabId = () => `tab-${++tabCounter}`;
 
@@ -730,6 +746,7 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
     // Persisted best-effort: a settings write must never block the UI, and a
     // failure to save a font size is not worth an error dialog.
     void api.settingsSet(APPEARANCE_KEY, JSON.stringify(appearance)).catch(() => {});
+    reportColorScheme(appearance.themeId);
   },
 
   loadAppearance: async () => {
@@ -737,7 +754,11 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
       const raw = await api.settingsGet(APPEARANCE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw) as Partial<Appearance>;
-      set({ appearance: { ...DEFAULT_APPEARANCE, ...parsed } });
+      const appearance = { ...DEFAULT_APPEARANCE, ...parsed };
+      set({ appearance });
+      // Told at startup as well as on change: a program that asks before the first theme
+      // change would otherwise be answered with the default rather than the real theme.
+      reportColorScheme(appearance.themeId);
 
       const width = await api.settingsGet("listColumnWidth");
       const parsedWidth = width ? Number(width) : NaN;
