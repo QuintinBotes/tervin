@@ -437,6 +437,32 @@ export interface CommandError {
 
 // --------------------------------------------------------------- terminal
 
+/**
+ * A Thread for an agent the user started in a pane, as the backend records it.
+ *
+ * Mirrors the `Thread` struct's fields that the UI needs. Arrives on
+ * `thread://observed` before any of the Thread's events, because the events are
+ * dropped for a Thread the UI has not been told about.
+ */
+export interface ObservedThread {
+  id: string;
+  agent: {
+    runtime_id: string;
+    display_name: string;
+    tier: string;
+    model?: string;
+    version?: string;
+  };
+  state: ThreadState;
+  task_title: string;
+  project: string | null;
+  cwd: string;
+  /** The pane it is running in. Its presence is what marks a Thread read-only. */
+  pane_id: string | null;
+  /** The agent's own session id — what `claude --resume` takes. */
+  resume_id: string | null;
+}
+
 export interface SpawnRequest {
   cwd?: string | null;
   cols: number;

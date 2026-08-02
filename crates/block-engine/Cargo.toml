@@ -21,3 +21,6 @@ base64.workspace = true
 
 [dev-dependencies]
 criterion = "0.8.2"
+# A real file on disk, because the upgrade path is exactly what an in-memory
+# database cannot exercise.
+tempfile = "3.27.0"

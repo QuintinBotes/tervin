@@ -201,6 +201,9 @@ pub async fn pty_spawn(
                 None => Vec::new(),
             };
             handle_block_events(&sink_state, &sink_app, events);
+            // The Threads stay on disk — the conversation happened. Only the live
+            // session mapping goes, so a new agent in a reused pane id starts clean.
+            sink_state.pane_agents.forget_pane(&pane_id);
             let _ = sink_app.emit(
                 "pane://exited",
                 serde_json::json!({ "paneId": pane_id.as_str(), "exitCode": exit_code }),
@@ -256,6 +259,58 @@ fn handle_block_events(state: &Arc<AppState>, app: &AppHandle, events: Vec<Block
                     serde_json::json!({ "cwd": cwd, "host": host }),
                 );
             }
+            BlockEvent::AgentActivity { pane_id, activity } => {
+                // Reading a transcript is blocking file I/O and this runs on the PTY
+                // pump, where a stall shows up as the terminal freezing. Off the
+                // thread it goes.
+                let state = state.clone();
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    let observation = state.pane_agents.observe(&activity, &pane_id, &state.store);
+
+                    if let Some(thread) = &observation.thread {
+                        if let Err(e) = state.store.upsert_thread(thread) {
+                            tracing::warn!("could not persist observed thread: {e}");
+                        }
+                        let _ = app.emit("thread://observed", thread);
+                    }
+                    for event in &observation.events {
+                        if let Err(e) = state.store.append_event(event, None) {
+                            tracing::warn!("could not persist observed event: {e}");
+                        }
+                        let _ = app.emit("thread://event", event);
+                    }
+                    if let Some((thread_id, thread_state)) = &observation.state {
+                        let _ = app.emit(
+                            "thread://state",
+                            serde_json::json!({
+                                "threadId": thread_id.as_str(),
+                                "state": thread_state,
+                                "label": thread_state.label(),
+                            }),
+                        );
+                    }
+                });
+            }
+
+            BlockEvent::NotificationRequested {
+                pane_id,
+                title,
+                body,
+            } => {
+                // Forwarded for the UI to show in its own notice rail. Not raised as a
+                // system notification: a process asking for one is not the same as the
+                // person wanting one, and OSC 777 can arrive from a remote host.
+                let _ = app.emit(
+                    "pane://notification",
+                    serde_json::json!({
+                        "paneId": pane_id.as_str(),
+                        "title": title,
+                        "body": body,
+                    }),
+                );
+            }
+
             BlockEvent::ClipboardRequested { selection, bytes } => {
                 // Surfaced, never performed here: a remote host must not be able
                 // to take the local clipboard without the user seeing it.

@@ -168,7 +168,10 @@ impl Store {
                 id         TEXT PRIMARY KEY,
                 updated_at TEXT NOT NULL,
                 state      TEXT NOT NULL,
-                json       TEXT NOT NULL
+                json       TEXT NOT NULL,
+                -- Denormalised out of `json` so a session can be matched back to
+                -- its Thread with an index rather than by scanning every row.
+                resume_id  TEXT
             );
 
             CREATE TABLE IF NOT EXISTS audit (
@@ -198,6 +201,48 @@ impl Store {
                 value TEXT NOT NULL
             );
             "#,
+        )?;
+
+        Self::add_missing_columns(conn)?;
+        Ok(())
+    }
+
+    /// Add columns that were introduced after a database was first created.
+    ///
+    /// `CREATE TABLE IF NOT EXISTS` above does nothing to a table that already
+    /// exists, so a new column never reaches an installed database — the schema
+    /// would be right on a fresh machine and wrong on every upgrade. Adding it here
+    /// keeps both cases in step without a version counter to get out of sync.
+    fn add_missing_columns(conn: &Connection) -> Result<()> {
+        // (table, column, definition)
+        const ADDED: &[(&str, &str, &str)] = &[("threads", "resume_id", "TEXT")];
+
+        for (table, column, definition) in ADDED {
+            let exists: bool = conn
+                .prepare(&format!("SELECT * FROM pragma_table_info('{table}')"))?
+                .query_map([], |r| r.get::<_, String>("name"))?
+                .filter_map(std::result::Result::ok)
+                .any(|name| name == *column);
+            if !exists {
+                conn.execute_batch(&format!(
+                    "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+                ))?;
+            }
+        }
+
+        // Only now that the column is guaranteed to exist. Creating this index in the
+        // batch above would fail on an upgrade — the table is not recreated, so the
+        // column is not there yet, and `Store::open` would error before the ALTER ran.
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS threads_resume ON threads(resume_id);")?;
+
+        // Backfill from the JSON the column was denormalised out of, so an upgrade
+        // can match existing Threads rather than starting duplicates for sessions
+        // that are already recorded.
+        conn.execute_batch(
+            "UPDATE threads
+                SET resume_id = json_extract(json, '$.resume_id')
+              WHERE resume_id IS NULL
+                AND json_extract(json, '$.resume_id') IS NOT NULL;",
         )?;
         Ok(())
     }
@@ -652,15 +697,39 @@ impl Store {
     pub fn upsert_thread(&self, thread: &tervin_core::thread::Thread) -> Result<()> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT OR REPLACE INTO threads (id, updated_at, state, json) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR REPLACE INTO threads (id, updated_at, state, json, resume_id) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 thread.id.as_str(),
                 rfc3339(&thread.updated_at),
                 serde_json::to_string(&thread.state)?,
                 serde_json::to_string(thread)?,
+                thread.resume_id.as_deref(),
             ],
         )?;
         Ok(())
+    }
+
+    /// Find a Thread by the handle its runtime uses to resume it.
+    ///
+    /// This is what stops a restart of Tervin, or `claude --resume`, from creating a
+    /// second Thread for a conversation that already has one.
+    pub fn thread_by_resume_id(
+        &self,
+        resume_id: &str,
+    ) -> Result<Option<tervin_core::thread::Thread>> {
+        if resume_id.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.conn.lock();
+        let json: Option<String> = conn
+            .query_row(
+                // Newest wins: an id could in principle have been reused.
+                "SELECT json FROM threads WHERE resume_id = ?1 ORDER BY updated_at DESC LIMIT 1",
+                params![resume_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(json.and_then(|j| serde_json::from_str(&j).ok()))
     }
 
     pub fn list_threads(&self, limit: usize) -> Result<Vec<tervin_core::thread::Thread>> {
@@ -1235,5 +1304,113 @@ mod history_tests {
         store.append_event(&prompt("recent", 1), None).unwrap();
         assert_eq!(store.prune_events(30).unwrap(), 0);
         assert_eq!(store.search_prompts("recent", 10).unwrap().len(), 1);
+    }
+}
+
+/// Upgrading a database that already exists.
+///
+/// `CREATE TABLE IF NOT EXISTS` is silent about a table it does not create, so a
+/// column added later reaches a fresh install and no installed one. These build a
+/// database with the pre-`resume_id` schema and then open it with the current code,
+/// which is the only way to catch that.
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    /// The `threads` table exactly as it shipped before `resume_id`.
+    const OLD_SCHEMA: &str = r#"
+        CREATE TABLE threads (
+            id         TEXT PRIMARY KEY,
+            updated_at TEXT NOT NULL,
+            state      TEXT NOT NULL,
+            json       TEXT NOT NULL
+        );
+    "#;
+
+    fn thread_json(id: &str, resume: Option<&str>) -> String {
+        let mut thread = tervin_core::thread::Thread::new(
+            tervin_core::AgentIdentity::new(
+                "claude-code",
+                "Claude Code",
+                tervin_core::Tier::EnhancedCli,
+            ),
+            "/proj".to_string(),
+            "an old thread".to_string(),
+        );
+        thread.id = ThreadId::from_external(id);
+        thread.resume_id = resume.map(String::from);
+        serde_json::to_string(&thread).unwrap()
+    }
+
+    #[test]
+    fn an_existing_database_gains_the_column_and_keeps_its_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("workspace.db");
+
+        // A database as an earlier build left it, holding a Thread with a resume id
+        // recorded only inside the JSON.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(OLD_SCHEMA).unwrap();
+            conn.execute(
+                "INSERT INTO threads (id, updated_at, state, json) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    "thr_old",
+                    "2026-07-01T00:00:00Z",
+                    "\"idle\"",
+                    thread_json("thr_old", Some("sess-abc")),
+                ],
+            )
+            .unwrap();
+        }
+
+        // Opening it must not fail, and must not lose the row.
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.list_threads(10).unwrap().len(), 1);
+
+        // Backfilled from the JSON, so a session already on disk is adopted rather
+        // than duplicated on the next notification.
+        let found = store.thread_by_resume_id("sess-abc").unwrap();
+        assert_eq!(
+            found.map(|t| t.id.as_str().to_string()),
+            Some("thr_old".to_string()),
+            "the resume id was not backfilled out of the existing JSON"
+        );
+    }
+
+    #[test]
+    fn opening_twice_is_harmless() {
+        // `ALTER TABLE ADD COLUMN` fails on a column that already exists, so the
+        // second open is the one that would break.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("workspace.db");
+        drop(Store::open(&path).unwrap());
+        assert!(
+            Store::open(&path).is_ok(),
+            "reopening a current database failed"
+        );
+    }
+
+    #[test]
+    fn a_thread_with_no_resume_id_is_not_matched_by_an_empty_lookup() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("workspace.db")).unwrap();
+
+        let mut thread = tervin_core::thread::Thread::new(
+            tervin_core::AgentIdentity::new(
+                "claude-code",
+                "Claude Code",
+                tervin_core::Tier::Structured,
+            ),
+            "/proj".to_string(),
+            "launched by Tervin".to_string(),
+        );
+        thread.resume_id = None;
+        store.upsert_thread(&thread).unwrap();
+
+        // Every Tervin-launched Thread has a null resume_id. If an empty lookup
+        // matched them, the first observed pane session would adopt an unrelated
+        // Thread and append its events to someone else's conversation.
+        assert!(store.thread_by_resume_id("").unwrap().is_none());
     }
 }
