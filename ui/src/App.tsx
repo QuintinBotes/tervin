@@ -47,6 +47,8 @@ import { AgentDeck } from "./components/AgentDeck";
 import { PlanSurface } from "./components/PlanSurface";
 import { HistorySurface } from "./components/HistorySurface";
 import { FileExplorer } from "./components/FileExplorer";
+import { ConnectionsPanel } from "./components/ConnectionsPanel";
+import { GitPanel } from "./components/GitPanel";
 
 /** The surfaces, in the order the switcher shows them. */
 const SURFACES: { id: Surface; label: string }[] = [
@@ -188,7 +190,7 @@ export default function App() {
         {s.surface === "terminal" && <TerminalSurface />}
         {s.surface === "plan" && <PlanSurface narrow={narrow} />}
         {s.surface === "agents" && <AgentsSurface narrow={narrow} />}
-        {s.surface === "review" && <ReviewPanel />}
+        {s.surface === "review" && <ReviewSurface narrow={narrow} />}
         {s.surface === "history" && <HistorySurface narrow={narrow} />}
       </div>
 
@@ -198,6 +200,7 @@ export default function App() {
         <CommandPalette onNewPane={() => useWorkspace.getState().addPane(makePane())} />
       )}
       {s.settingsOpen && <SettingsPanel />}
+      {s.connectionsOpen && <ConnectionsOverlay />}
       {s.pendingApprovals.length > 0 && <ApprovalSheet />}
     </div>
   );
@@ -315,6 +318,102 @@ function ExplorerColumn() {
       </div>
       {onLeft && handle}
     </>
+  );
+}
+
+/**
+ * Review: what the repository looks like, then what changed.
+ *
+ * `GitPanel` reports branch, upstream divergence, and any operation in progress — a
+ * rebase or merge changes what a commit means, so it belongs beside the diff rather than
+ * behind it. It had been written and left unreachable, which a reachability test caught.
+ */
+function ReviewSurface({ narrow }: { narrow: boolean }) {
+  const s = useWorkspace();
+  return (
+    <TwoColumn
+      narrow={narrow}
+      listLabel="Repository"
+      leftWidth={s.listColumnWidth}
+      onResize={s.setListColumnWidth}
+      left={
+        <div className="col" style={{ minHeight: 0, width: "100%" }}>
+          <div className="panel-header">
+            <span className="label">Repository</span>
+          </div>
+          <div className="grow" style={{ overflow: "auto", minHeight: 0 }}>
+            <GitPanel />
+          </div>
+        </div>
+      }
+      right={<ReviewPanel />}
+    />
+  );
+}
+
+/**
+ * Connections as an overlay rather than a surface.
+ *
+ * Opening a connection is a one-shot action — pick a host, get a pane — not somewhere you
+ * stay. A sixth tab for it would spend permanent space on something used occasionally.
+ */
+function ConnectionsOverlay() {
+  const s = useWorkspace();
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  // Takes the keyboard, so nothing typed here reaches the shell underneath.
+  useEffect(() => {
+    ref.current?.focus();
+  }, []);
+
+  return (
+    <div
+      ref={ref}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Connections"
+      tabIndex={-1}
+      onClick={() => s.setConnections(false)}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "color-mix(in srgb, var(--tervin-bg) 70%, transparent)",
+        display: "grid",
+        placeItems: "center",
+        padding: "var(--sp-6)",
+        zIndex: 150,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="col"
+        style={{
+          width: "min(760px, 96vw)",
+          height: "min(600px, 88vh)",
+          background: "var(--tervin-panel)",
+          border: "1px solid var(--tervin-line)",
+          borderRadius: "var(--radius-lg)",
+          overflow: "hidden",
+        }}
+      >
+        <div className="grow" style={{ minHeight: 0, overflow: "auto" }}>
+          <ConnectionsPanel />
+        </div>
+        <div
+          className="row"
+          style={{
+            flex: "none",
+            padding: "var(--sp-2) var(--sp-3)",
+            borderTop: "1px solid var(--tervin-line)",
+          }}
+        >
+          <div className="grow" />
+          <button className="btn" onClick={() => s.setConnections(false)}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1018,6 +1117,10 @@ function runAction(action: string, pane: string | null): boolean {
     // With surfaces there is no inspector to toggle; these switch surface, which
     // is the same intent expressed in a two-column layout.
     case "connections.open":
+      // Previously switched surface, which quietly meant the Connections panel — SSH
+      // hosts, tmux sessions, serial ports — was written and never reachable.
+      s.setConnections(true);
+      return true;
     case "inspector.toggle":
       s.setSurface(s.surface === "agents" ? "terminal" : "agents");
       return true;
