@@ -31,7 +31,14 @@ pub enum BlockEvent {
     Finished(Block),
     /// The working directory changed, which the status rail reflects even when
     /// no command is running.
-    CwdChanged { cwd: String, host: Option<String> },
+    ///
+    /// The pane travels with it. Without that, a workspace with two panes cannot tell
+    /// which one moved — so nothing could act on this, and nothing did.
+    CwdChanged {
+        pane_id: PaneId,
+        cwd: String,
+        host: Option<String>,
+    },
     /// A program asked to write the system clipboard via OSC 52.
     ///
     /// Surfaced rather than performed: honouring it blindly would let anything
@@ -280,6 +287,7 @@ impl BlockBuilder {
                     self.phase = Phase::AtPrompt;
                 }
                 events.push(BlockEvent::CwdChanged {
+                    pane_id: self.pane_id.clone(),
                     cwd: path.clone(),
                     host: host.clone(),
                 });

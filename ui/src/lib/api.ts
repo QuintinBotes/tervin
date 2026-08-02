@@ -791,6 +791,28 @@ export const scrollbackLoad = (paneKey: string, program: string | null) =>
 export const colorSchemeSet = (dark: boolean) =>
   invoke<number>("color_scheme_set", { dark });
 
+/** A directory offered for `cd`, ranked by match and frecency. */
+export interface DirSuggestion {
+  path: string;
+  name: string;
+  visits: number;
+  age_hours: number;
+  /** True when the directory no longer exists. */
+  missing: boolean;
+}
+
+/**
+ * Directories a pane has actually sat in, ranked for `query`.
+ *
+ * An empty query gives "where I usually am"; a typed one gives "the thing I mean".
+ */
+export const recentDirectories = (query: string, limit = 30) =>
+  invoke<DirSuggestion[]>("recent_directories", { query, limit });
+
+/** Forget a directory that no longer exists. */
+export const forgetDirectory = (path: string) =>
+  invoke<void>("forget_directory", { path });
+
 /** Forget saved history for panes the session no longer contains. */
 export const scrollbackRetain = (paneKeys: string[]) =>
   invoke<number>("scrollback_retain", { paneKeys });
