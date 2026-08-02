@@ -26,8 +26,8 @@
     "@xterm/addon-web-links": "^0.11",
     "@xterm/addon-webgl": "^0.18",
     "@xterm/xterm": "^5.5",
-    "react": "^18.3",
-    "react-dom": "^18.3",
+    "react": "^19.2",
+    "react-dom": "^19.2",
     "zustand": "^5"
   },
   "devDependencies": {
@@ -35,7 +35,7 @@
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^26.1.2",
-    "@types/react": "^18.3",
+    "@types/react": "^19.2",
     "@types/react-dom": "^18.3",
     "@vitejs/plugin-react": "^4",
     "jsdom": "^30.0.1",
