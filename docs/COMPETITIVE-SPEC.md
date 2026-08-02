@@ -251,6 +251,42 @@ own path, and an unknown shell falls back to path and history completion, which 
 shell. A shell Tervin cannot drive degrades silently to today's behaviour and says so once in
 the Bridge panel.
 
+#### What a spike established, so the next attempt does not rediscover it
+
+Approach 3 was tried against real zsh 5.9 before being specified further, because "ask the
+user's shell" is easy to say and the question is whether it actually yields usable data. It
+does. `git commit -` returned all 114 real flags, `--all` through `--untracked-files`, out of
+the user's own compsys with nothing guessed and `git --help` never executed.
+
+The working recipe, with the parts that are not obvious:
+
+- **`zsh/zpty`, not a plain subshell.** Completion functions only exist inside a widget
+  context, so there has to be an interactive zsh on a pty to send keystrokes to.
+- **`zsh -f -i`.** `-f` skips the user's rc files. Their prompt, plugins and aliases must not
+  affect this, and more importantly their startup code should not be run to answer a
+  keystroke. The cost is that `compinit` has to be loaded explicitly, which is the next point.
+- **`compinit -u -D`.** Without `-u` it prompts about insecure directories and hangs; without
+  `-D` it rebuilds the dump.
+- **`LISTMAX` large and `list-prompt ''`.** Otherwise zsh replies
+  `do you wish to see all 114 possibilities (38 lines)?` and lists nothing. This silently
+  produced an empty result during the spike and looked like the technique failing.
+- **`COLUMNS=1`** to get one candidate per line. With a wide terminal zsh packs into columns,
+  and splitting those on whitespace breaks on any candidate or description containing a space.
+- **The output needs decoding, not just reading.** At `COLUMNS=1` zsh writes each character
+  followed by a space and a backspace, so `--all` arrives as
+  `-·-·a·l·l·`. Stripping every space-backspace pair recovers the text, then CSI
+  sequences come off separately. Tervin already owns a terminal parser, so feeding the pty
+  output through `terminal-core` and reading the resulting screen lines is worth weighing
+  against ad-hoc stripping.
+
+What remains genuinely hard, and what makes this its own piece of work rather than an
+afternoon: **synchronisation.** Knowing when a completion listing is finished needs a marker
+in the child's prompt and a read loop that waits for it, and getting that wrong reads the
+setup echo back as candidates, which the spike also managed to do. A real implementation needs
+that marker protocol, a timeout, a cache keyed on the command prefix, and separate paths for
+bash and fish. An unknown shell falls back to path and history completion, which already work,
+so the failure mode is degradation rather than breakage.
+
 ### 3.3 Blocks and shell integration across SSH and subshells
 `P1.` Today a Block needs Tervin's hook, which lives on the local machine. Warp survives an
 SSH hop, `nvm`, a venv, `docker exec` and `kubectl exec`. This is the difference between
