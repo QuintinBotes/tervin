@@ -49,6 +49,9 @@ const MAX_TEXT: usize = 16 * 1024;
 pub struct TranscriptReader {
     path: PathBuf,
     offset: u64,
+    /// Shell tool calls seen but not yet resolved, so a `tool_result` can be recognised
+    /// as a command's outcome rather than some other tool's.
+    shell_calls: ShellCalls,
     /// Lines that were not valid JSON, or were a conversational turn this build
     /// could make nothing of.
     ///
@@ -78,6 +81,7 @@ impl TranscriptReader {
         Self {
             path: path.into(),
             offset: 0,
+            shell_calls: ShellCalls::default(),
             unrecognised: 0,
         }
     }
@@ -93,6 +97,7 @@ impl TranscriptReader {
         Self {
             path,
             offset,
+            shell_calls: ShellCalls::default(),
             unrecognised: 0,
         }
     }
@@ -145,7 +150,7 @@ impl TranscriptReader {
             }
             match serde_json::from_slice::<Line>(line) {
                 Ok(parsed) => {
-                    if !parsed.push_into(&mut out) {
+                    if !parsed.push_into(&mut out, &mut self.shell_calls) {
                         self.unrecognised += 1;
                     }
                 }
@@ -154,6 +159,35 @@ impl TranscriptReader {
             }
         }
         Ok(out)
+    }
+}
+
+/// Shell tool calls awaiting a result.
+///
+/// Bounded, because a transcript read from the middle can contain results for calls whose
+/// requests were never seen — and an unbounded set of ids that will never be resolved is
+/// a slow leak for a long-running session.
+#[derive(Debug, Default)]
+struct ShellCalls {
+    /// Call id to the command it ran, oldest first.
+    pending: std::collections::VecDeque<(String, String)>,
+}
+
+impl ShellCalls {
+    /// Most unresolved shell calls remembered at once.
+    const MAX: usize = 64;
+
+    fn started(&mut self, id: String, command: String) {
+        if self.pending.len() >= Self::MAX {
+            self.pending.pop_front();
+        }
+        self.pending.push_back((id, command));
+    }
+
+    /// Take the command for a call id, if it was a shell call.
+    fn finish(&mut self, id: &str) -> Option<String> {
+        let index = self.pending.iter().position(|(pending, _)| pending == id)?;
+        self.pending.remove(index).map(|(_, command)| command)
     }
 }
 
@@ -170,6 +204,22 @@ struct Line {
     timestamp: Option<String>,
     #[serde(rename = "isSidechain", default)]
     is_sidechain: bool,
+    /// Sits beside the `tool_result` block and carries what the tool actually produced.
+    ///
+    /// For a shell call that is `stdout`, `stderr` and `interrupted` — enough to build a
+    /// real Block for a command run in a pane, rather than a bare "a tool ran" row.
+    #[serde(rename = "toolUseResult")]
+    tool_use_result: Option<ToolUseResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolUseResult {
+    #[serde(default)]
+    stdout: Option<String>,
+    #[serde(default)]
+    stderr: Option<String>,
+    #[serde(default)]
+    interrupted: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,6 +264,10 @@ enum Block {
         input: serde_json::Value,
     },
     ToolResult {
+        /// Present on every version seen. Used to tell a shell call's result from any
+        /// other tool's, which is what makes a command's Block possible.
+        #[serde(default)]
+        tool_use_id: Option<String>,
         #[serde(default)]
         is_error: bool,
         #[serde(default)]
@@ -229,7 +283,7 @@ impl Line {
     /// Returns false only when this build could not account for the line: a
     /// conversational turn it read nothing out of. A bookkeeping entry returns true,
     /// because ignoring it is the intended outcome rather than a gap.
-    fn push_into(self, out: &mut Vec<TranscriptEntry>) -> bool {
+    fn push_into(self, out: &mut Vec<TranscriptEntry>, shell_calls: &mut ShellCalls) -> bool {
         let sidechain = self.is_sidechain;
         let ts = self.timestamp.clone();
         let before = out.len();
@@ -311,6 +365,16 @@ impl Line {
                             if let Some(change) = file_change(&name, &input) {
                                 push(EventPayload::FileChanged { change });
                             }
+                            // A shell call is a command, and a command should become a
+                            // Block — searchable and bookmarkable with the rest of the
+                            // user's history rather than only a tool row here.
+                            if let Some(command) = shell_command(&name, &input) {
+                                shell_calls.started(id.clone(), command.clone());
+                                push(EventPayload::CommandStarted {
+                                    command,
+                                    block_id: None,
+                                });
+                            }
                             push(EventPayload::ToolRequested {
                                 tool_use_id: id,
                                 input_summary: summarise_input(&name, &input),
@@ -318,13 +382,63 @@ impl Line {
                                 parent_tool_use_id: None,
                             });
                         }
-                        Block::ToolResult { is_error, content } => {
-                            // The transcript pairs a result with its request by
-                            // position, and the id is not repeated on the result in
-                            // every version — so this reports the outcome without
-                            // claiming to know which request it belongs to.
+                        Block::ToolResult {
+                            tool_use_id,
+                            is_error,
+                            content,
+                        } => {
+                            let id = tool_use_id.unwrap_or_default();
+
+                            // A result for a shell call closes that command. The output
+                            // comes from `toolUseResult` when the line carries it, which
+                            // has stdout and stderr apart, and falls back to the block's
+                            // own content when it does not.
+                            if let Some(command) = shell_calls.finish(&id) {
+                                let (stdout, stderr, interrupted) = match &self.tool_use_result {
+                                    Some(r) => (
+                                        r.stdout.clone().unwrap_or_default(),
+                                        r.stderr.clone().unwrap_or_default(),
+                                        r.interrupted,
+                                    ),
+                                    None => (flatten_text(&content), String::new(), false),
+                                };
+
+                                for (stream, text) in [
+                                    (tervin_core::events::OutputStream::Stdout, &stdout),
+                                    (tervin_core::events::OutputStream::Stderr, &stderr),
+                                ] {
+                                    if !text.trim().is_empty() {
+                                        push(EventPayload::CommandOutput {
+                                            stream,
+                                            excerpt: clamp(text),
+                                            block_id: None,
+                                        });
+                                    }
+                                }
+
+                                push(EventPayload::CommandCompleted {
+                                    command,
+                                    // Derived, not measured. The transcript records
+                                    // whether the call failed, never a status — which is
+                                    // why the flag below is false and the Block shows no
+                                    // number.
+                                    exit_code: if interrupted {
+                                        130
+                                    } else if is_error {
+                                        1
+                                    } else {
+                                        0
+                                    },
+                                    duration_ms: 0,
+                                    exit_code_reported: false,
+                                    block_id: None,
+                                });
+                            }
+
                             push(EventPayload::ToolCompleted {
-                                tool_use_id: String::new(),
+                                tool_use_id: id,
+                                // The transcript does not repeat the tool's name on the
+                                // result, and guessing it from the id would be a lie.
                                 tool_name: String::new(),
                                 is_error,
                                 output_summary: clamp(&flatten_text(&content)),
@@ -352,6 +466,21 @@ impl Line {
 
         understood
     }
+}
+
+/// The command a shell tool call ran, if this is one.
+///
+/// Only `Bash`: a call that reads a file or searches is not a command, and turning every
+/// tool call into a Block would fill the Blocks list with rows that have no command line.
+fn shell_command(tool: &str, input: &serde_json::Value) -> Option<String> {
+    if tool != "Bash" {
+        return None;
+    }
+    let command = input.get("command")?.as_str()?.trim();
+    if command.is_empty() {
+        return None;
+    }
+    Some(command.to_string())
 }
 
 /// Recognise the edit tools, so a change to a file becomes a `file.changed`.
@@ -656,6 +785,162 @@ mod tests {
         );
         // A call with no recognisable argument still names the tool.
         assert!(rows.contains(&"tool: Read".to_string()), "{rows:?}");
+    }
+
+    #[test]
+    fn a_shell_call_becomes_a_command_that_starts_and_finishes() {
+        // The point: a command an agent ran in a pane should become a Block, which needs a
+        // start and a completion rather than a single "a tool ran" row.
+        let dir = tempfile::tempdir().unwrap();
+        let call = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"cargo test --workspace"}}]},"timestamp":"2026-08-02T15:29:00.000Z"}"#;
+        // `toolUseResult` sits on the line and keeps stdout and stderr apart.
+        let result = r#"{"type":"user","toolUseResult":{"stdout":"test result: ok. 470 passed","stderr":"","interrupted":false},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":false,"content":"test result: ok. 470 passed"}]},"timestamp":"2026-08-02T15:29:30.000Z"}"#;
+        let path = write(&dir, "s.jsonl", &format!("{call}\n{result}\n"));
+
+        let entries = TranscriptReader::new(&path).read_new().unwrap();
+        let kinds: Vec<&str> = entries.iter().map(|e| e.payload.kind()).collect();
+
+        assert!(kinds.contains(&"command.started"), "{kinds:?}");
+        assert!(kinds.contains(&"command.output"), "{kinds:?}");
+        assert!(kinds.contains(&"command.completed"), "{kinds:?}");
+
+        let started = entries
+            .iter()
+            .find_map(|e| match &e.payload {
+                EventPayload::CommandStarted { command, .. } => Some(command.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(started, "cargo test --workspace");
+
+        match entries
+            .iter()
+            .find(|e| matches!(e.payload, EventPayload::CommandCompleted { .. }))
+            .map(|e| &e.payload)
+        {
+            Some(EventPayload::CommandCompleted {
+                exit_code,
+                exit_code_reported,
+                ..
+            }) => {
+                // The transcript records whether the call failed, never a status. Marking
+                // the code as unreported is what keeps it off the Block.
+                assert!(
+                    !exit_code_reported,
+                    "a derived exit code was marked as reported"
+                );
+                assert_eq!(*exit_code, 0);
+            }
+            other => panic!("expected a completion, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_failed_shell_call_and_an_interrupted_one_are_told_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let call = |id: &str| {
+            format!(
+                r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"tool_use","id":"{id}","name":"Bash","input":{{"command":"cargo test"}}}}]}},"timestamp":"2026-08-02T15:29:00.000Z"}}"#
+            )
+        };
+        let failed = r#"{"type":"user","toolUseResult":{"stdout":"","stderr":"error: 2 failed","interrupted":false},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"failed"}]},"timestamp":"2026-08-02T15:29:30.000Z"}"#;
+        let stopped = r#"{"type":"user","toolUseResult":{"stdout":"","stderr":"","interrupted":true},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","is_error":true,"content":"interrupted"}]},"timestamp":"2026-08-02T15:29:40.000Z"}"#;
+        let path = write(
+            &dir,
+            "s.jsonl",
+            &format!("{}\n{failed}\n{}\n{stopped}\n", call("t1"), call("t2")),
+        );
+
+        let entries = TranscriptReader::new(&path).read_new().unwrap();
+        let codes: Vec<i32> = entries
+            .iter()
+            .filter_map(|e| match &e.payload {
+                EventPayload::CommandCompleted { exit_code, .. } => Some(*exit_code),
+                _ => None,
+            })
+            .collect();
+        // 1 for a failure, 130 for a stop — a distinction the Block turns into "Failed"
+        // and "Interrupted" without ever showing the number.
+        assert_eq!(codes, vec![1, 130]);
+
+        // Stderr reaches the Block, which is where a test failure actually is.
+        assert!(entries.iter().any(|e| matches!(
+            &e.payload,
+            EventPayload::CommandOutput { excerpt, .. } if excerpt.contains("2 failed")
+        )));
+    }
+
+    #[test]
+    fn a_tool_that_is_not_a_shell_call_produces_no_command() {
+        // Turning every tool call into a Block would fill the Blocks list with rows that
+        // have no command line.
+        let dir = tempfile::tempdir().unwrap();
+        let line = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/proj/src/main.rs"}}]},"timestamp":"2026-08-02T15:29:00.000Z"}"#;
+        let path = write(&dir, "s.jsonl", &format!("{line}\n"));
+
+        let kinds: Vec<&str> = TranscriptReader::new(&path)
+            .read_new()
+            .unwrap()
+            .iter()
+            .map(|e| e.payload.kind())
+            .collect();
+        assert!(!kinds.contains(&"command.started"), "{kinds:?}");
+        assert!(kinds.contains(&"tool.requested"), "{kinds:?}");
+    }
+
+    #[test]
+    fn a_result_pairs_with_its_own_call_even_out_of_order() {
+        // Two calls in flight, resolved in the reverse order. Pairing by position would
+        // attribute each command's output to the other one.
+        let dir = tempfile::tempdir().unwrap();
+        let calls = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"a","name":"Bash","input":{"command":"first-command"}},{"type":"tool_use","id":"b","name":"Bash","input":{"command":"second-command"}}]},"timestamp":"2026-08-02T15:29:00.000Z"}"#;
+        let result_b = r#"{"type":"user","toolUseResult":{"stdout":"from second","stderr":"","interrupted":false},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b","content":"ok"}]},"timestamp":"2026-08-02T15:29:10.000Z"}"#;
+        let path = write(&dir, "s.jsonl", &format!("{calls}\n{result_b}\n"));
+
+        let entries = TranscriptReader::new(&path).read_new().unwrap();
+        let completed: Vec<String> = entries
+            .iter()
+            .filter_map(|e| match &e.payload {
+                EventPayload::CommandCompleted { command, .. } => Some(command.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(completed, vec!["second-command".to_string()]);
+    }
+
+    #[test]
+    fn a_result_for_a_call_never_seen_is_not_turned_into_a_command() {
+        // Reading a transcript from the middle gives results whose requests are behind the
+        // offset. Inventing a command for them would produce a Block with no command line.
+        let dir = tempfile::tempdir().unwrap();
+        let orphan = r#"{"type":"user","toolUseResult":{"stdout":"out","stderr":"","interrupted":false},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"never-seen","content":"ok"}]},"timestamp":"2026-08-02T15:29:10.000Z"}"#;
+        let path = write(&dir, "s.jsonl", &format!("{orphan}\n"));
+
+        let kinds: Vec<&str> = TranscriptReader::new(&path)
+            .read_new()
+            .unwrap()
+            .iter()
+            .map(|e| e.payload.kind())
+            .collect();
+        assert!(!kinds.contains(&"command.completed"), "{kinds:?}");
+        // The tool row still appears — something did happen.
+        assert!(kinds.contains(&"tool.completed"), "{kinds:?}");
+    }
+
+    #[test]
+    fn unresolved_shell_calls_do_not_accumulate_without_bound() {
+        // A session where results are never seen must not grow a set of ids forever.
+        let mut calls = ShellCalls::default();
+        for i in 0..ShellCalls::MAX + 50 {
+            calls.started(format!("id{i}"), format!("command {i}"));
+        }
+        assert_eq!(calls.pending.len(), ShellCalls::MAX);
+        // The oldest were dropped, the newest kept — a result is far likelier to arrive
+        // for a recent call.
+        assert!(calls.finish("id0").is_none());
+        assert!(calls
+            .finish(&format!("id{}", ShellCalls::MAX + 49))
+            .is_some());
     }
 
     #[test]

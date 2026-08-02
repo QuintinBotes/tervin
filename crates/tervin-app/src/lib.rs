@@ -4,6 +4,7 @@
 //! the workspace UI calls. Everything domain-specific lives in the other crates;
 //! this one is wiring.
 
+pub mod agent_blocks;
 pub mod commands;
 pub mod pane_agents;
 pub mod state;

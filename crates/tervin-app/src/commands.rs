@@ -346,6 +346,17 @@ fn handle_block_events(state: &Arc<AppState>, app: &AppHandle, events: Vec<Block
                             tracing::warn!("could not persist observed event: {e}");
                         }
                         let _ = app.emit("thread://event", event);
+
+                        // A session someone ran themselves gets Blocks too. Its commands
+                        // come from the transcript, so they arrive as `tool.requested`
+                        // rather than `command.started` — the bridge ignores what it does
+                        // not recognise, which keeps this a single code path.
+                        if let Some(thread_id) = &event.thread_id {
+                            let update = state.agent_blocks.observe(thread_id, event);
+                            if update.started.is_some() || update.finished.is_some() {
+                                crate::agent_blocks::apply(&state.store, &app, update);
+                            }
+                        }
                     }
                     if let Some((thread_id, thread_state)) = &observation.state {
                         let _ = app.emit(
@@ -1048,12 +1059,25 @@ pub async fn thread_start(
     // Drain the event stream into the store and on to the UI.
     {
         let store = state.store.clone();
+        // The whole state, not just the store: the Block bridge holds the command
+        // currently open for this Thread. `State<'_, _>` cannot cross into the task, so
+        // the inner `Arc` is cloned out first.
+        let app_state = state.inner().clone();
         let app = app.clone();
         let thread_id = thread_id.clone();
         let mut events = launched.events;
         tokio::spawn(async move {
             while let Some(event) = events.recv().await {
                 let _ = app.emit("thread://event", &event);
+
+                // A command an agent ran is the same kind of thing as one you ran, so it
+                // becomes a Block — searchable and bookmarkable with the rest of your
+                // history rather than only a row on this timeline.
+                let update = app_state.agent_blocks.observe(&thread_id, &event);
+                if update.started.is_some() || update.finished.is_some() {
+                    crate::agent_blocks::apply(&store, &app, update);
+                }
+
                 if let tervin_core::EventPayload::ThreadState { state } = &event.payload {
                     let _ = app.emit(
                         "thread://state",

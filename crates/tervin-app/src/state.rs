@@ -85,6 +85,8 @@ pub struct AppState {
     /// Held here because the answer comes from the UI's theme while the question arrives
     /// on the PTY pump, and the two never meet otherwise.
     pub color_scheme: Mutex<ColorSchemeState>,
+    /// Commands agents ran, being turned into Blocks.
+    pub agent_blocks: crate::agent_blocks::AgentBlocks,
 }
 
 impl AppState {
@@ -183,6 +185,7 @@ impl AppState {
             startup_notices: RwLock::new(notices),
             pane_agents: crate::pane_agents::PaneAgents::new(),
             color_scheme: Mutex::new(ColorSchemeState::default()),
+            agent_blocks: crate::agent_blocks::AgentBlocks::new(),
         });
 
         // Build the file index off the startup path: walking a large project takes

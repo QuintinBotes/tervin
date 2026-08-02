@@ -5,6 +5,26 @@ log says what changed, and this is for what it means to someone using it.
 
 ## Unreleased
 
+### Commands an agent ran are Blocks now
+
+- A command an agent runs is the same kind of thing as one you ran, so it becomes a
+  **Block**: searchable with the rest of your history, bookmarkable, with parsed
+  diagnostics you can jump to. `Block::thread_id` existed for this and had never been set.
+- **It does not claim an exit code unless a runtime reported one.** An ACP terminal
+  reports a real status; Claude Code reports success or failure and nothing more, and the
+  0/1/130 on its events is Tervin's inference. A Block from the latter carries no number
+  and says *"no exit status reported"* — because an exit code is the one field people read
+  as fact, and a fabricated one is worse than an admitted gap.
+- **It says the log is partial, and for the right reason.** Adapters pass a bounded
+  excerpt, which is a different thing from a shell Block hitting the capture limit —
+  showing the wrong reason would send someone looking for a setting that is not involved.
+- A Block an agent ran is **marked as such** in the list. In a mixed list that is the
+  difference between "I did that" and "an agent did that", which changes how a failure
+  reads.
+- This covers agents Tervin launched *and* one you ran yourself in a pane: a `Bash` call
+  in a session transcript now produces a real command with its stdout and stderr, paired
+  to its own call by id rather than by position.
+
 ### Programs in a pane are told when the theme changes
 
 - Tervin ships fifteen themes, and switching between them is a normal thing to do — but

@@ -521,6 +521,7 @@ mod tests {
                 command: "cargo test".into(),
                 exit_code: 101,
                 duration_ms: 900,
+                exit_code_reported: true,
                 block_id: None,
             }),
             event(EventPayload::CommandOutput {
@@ -658,6 +659,7 @@ mod tests {
                     command: format!("step{i:02}"),
                     exit_code: 0,
                     duration_ms: 1,
+                    exit_code_reported: true,
                     block_id: None,
                 })
             })
@@ -709,6 +711,7 @@ mod tests {
                 command: "cat readme.md".into(),
                 exit_code: 0,
                 duration_ms: 1,
+                exit_code_reported: true,
                 block_id: None,
             }),
             event(EventPayload::CommandOutput {
