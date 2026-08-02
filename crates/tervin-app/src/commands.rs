@@ -1514,6 +1514,72 @@ pub async fn saved_commands(state: State<'_, Arc<AppState>>) -> Result<Vec<Saved
     .await
 }
 
+/// One command from history, ranked and with its last outcome.
+#[derive(Debug, Serialize)]
+pub struct CommandSuggestion {
+    pub command: String,
+    pub uses: u32,
+    pub age_hours: u32,
+    /// True when the most recent run failed, which is worth seeing before rerunning it.
+    pub failed_last_time: bool,
+}
+
+/// Commands you have run, ranked for a query.
+///
+/// What a shell's own `Ctrl-R` cannot do: it searches one shell's history, on one machine,
+/// with no idea whether the command worked. This searches everything Tervin has recorded,
+/// across panes and projects, and says whether it succeeded last time.
+///
+/// Same two signals as the directory picker, combined rather than chosen between: the fuzzy
+/// score and frecency.
+#[tauri::command]
+pub async fn command_history(
+    state: State<'_, Arc<AppState>>,
+    query: String,
+    project: Option<String>,
+    limit: usize,
+) -> Result<Vec<CommandSuggestion>> {
+    let store = state.store.clone();
+    blocking(move || {
+        let hits = store
+            .command_history(project.as_deref(), limit.clamp(1, 200))
+            .map_err(|e| CommandError::new("command_history", e))?;
+
+        let query = query.trim().to_string();
+        let mut matcher = file_index::fuzzy::Matcher::default();
+        let mut scored: Vec<(f64, block_engine::CommandHit)> = Vec::new();
+        for hit in hits {
+            let score = if query.is_empty() {
+                hit.frecency()
+            } else {
+                match matcher.score(&query, &hit.command) {
+                    Some(m) => f64::from(m.score) + hit.frecency(),
+                    None => continue,
+                }
+            };
+            scored.push((score, hit));
+        }
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                // A stable tiebreak, so the list does not reshuffle between keystrokes.
+                .then_with(|| a.1.command.cmp(&b.1.command))
+        });
+        scored.truncate(limit.clamp(1, 200));
+
+        Ok(scored
+            .into_iter()
+            .map(|(_, hit)| CommandSuggestion {
+                failed_last_time: hit.failed_last_time(),
+                age_hours: hit.age_hours.min(f64::from(u32::MAX)) as u32,
+                uses: hit.uses,
+                command: hit.command,
+            })
+            .collect())
+    })
+    .await
+}
+
 /// A directory offered for `cd`, with why it ranked where it did.
 #[derive(Debug, Serialize)]
 pub struct DirSuggestion {

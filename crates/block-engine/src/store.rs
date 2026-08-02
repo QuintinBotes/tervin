@@ -9,7 +9,9 @@
 //! per row would stall on scroll — so the row carries a bounded preview and the
 //! full output is fetched only when something expands.
 
-use crate::model::{Block, BlockOutput, BlockStatus, GitContext, ParsedOutput, RecentDir};
+use crate::model::{
+    Block, BlockOutput, BlockStatus, CommandHit, GitContext, ParsedOutput, RecentDir,
+};
 use crate::query::{BlockFilter, BlockSummary, SortOrder};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
@@ -1041,6 +1043,77 @@ impl Store {
             "DELETE FROM pane_scrollback WHERE saved_at < ?1",
             params![rfc3339(&cutoff)],
         )?)
+    }
+
+    // --------------------------------------------------------- command history
+
+    /// Commands you have run, deduplicated and ranked.
+    ///
+    /// This is the thing a shell's own history search cannot do. `Ctrl-R` searches *this*
+    /// shell's history: one machine, one session's ancestry, no idea whether the command
+    /// worked. Tervin already records every command with its exit status, directory and
+    /// project, so it can answer "that command I ran last week in the other repo" and say
+    /// whether it succeeded when you last ran it.
+    ///
+    /// Ranked by frecency over the *distinct* command text, so running something twenty
+    /// times makes it easy to find rather than filling the list with twenty rows.
+    /// No query parameter: a `LIKE` prefilter would exclude the non-contiguous matches a
+    /// fuzzy search exists to find, so the newest distinct commands are returned and the
+    /// caller ranks them.
+    pub fn command_history(&self, project: Option<&str>, limit: usize) -> Result<Vec<CommandHit>> {
+        let conn = self.conn.lock();
+        // Grouped in SQL rather than in Rust: the blocks table is the largest thing here,
+        // and pulling every row out to deduplicate would defeat the index.
+        let mut sql = String::from(
+            "SELECT command,
+                    COUNT(*) AS uses,
+                    MAX(started_at) AS last_used,
+                    -- The status of the most recent run, not the best or the worst one:
+                    -- what someone wants to know is whether it worked *last time*.
+                    (SELECT b2.status FROM blocks b2
+                      WHERE b2.command = b1.command
+                      ORDER BY b2.started_at DESC LIMIT 1) AS last_status
+               FROM blocks b1
+              WHERE TRIM(command) <> ''",
+        );
+        if project.is_some() {
+            sql.push_str(" AND project = ?2");
+        }
+        sql.push_str(" GROUP BY command ORDER BY last_used DESC LIMIT ?1");
+
+        let now = tervin_core::now();
+        let mut stmt = conn.prepare(&sql)?;
+        // A generous window before ranking, because the fuzzy match happens in the caller
+        // and the newest rows are not necessarily the ones that match.
+        let scan = (limit.max(1) * 20).min(2_000) as i64;
+
+        let map = |r: &Row<'_>| -> rusqlite::Result<(String, i64, String, String)> {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        };
+        let rows: Vec<(String, i64, String, String)> = match project {
+            Some(project) => stmt
+                .query_map(params![scan, project], map)?
+                .collect::<rusqlite::Result<_>>()?,
+            None => stmt
+                .query_map(params![scan], map)?
+                .collect::<rusqlite::Result<_>>()?,
+        };
+
+        Ok(rows
+            .into_iter()
+            .map(|(command, uses, last_used, last_status)| {
+                let age_hours = DateTime::parse_from_rfc3339(&last_used)
+                    .map(|t| (now - t.with_timezone(&Utc)).num_minutes() as f64 / 60.0)
+                    .unwrap_or(f64::MAX)
+                    .max(0.0);
+                CommandHit {
+                    command,
+                    uses: uses.max(0) as u32,
+                    age_hours,
+                    last_status,
+                }
+            })
+            .collect())
     }
 
     // ----------------------------------------------------------- saved commands
@@ -2121,5 +2194,162 @@ mod recent_dir_tests {
         };
         assert!(broken.frecency().is_finite());
         assert!(broken.frecency() >= 0.0);
+    }
+}
+
+/// Command history: the thing a shell's own `Ctrl-R` cannot do.
+#[cfg(test)]
+mod command_history_tests {
+    use super::*;
+    use crate::model::CommandHit;
+
+    fn block_at(
+        command: &str,
+        status: BlockStatus,
+        project: Option<&str>,
+        minutes_ago: i64,
+    ) -> Block {
+        let mut b = Block::new(
+            PaneId::from_external("pane_1"),
+            SessionId::new(),
+            command,
+            "/proj",
+            "local",
+        );
+        b.status = status;
+        b.project = project.map(str::to_string);
+        b.started_at = tervin_core::now() - chrono::Duration::minutes(minutes_ago);
+        b
+    }
+
+    #[test]
+    fn deduplicates_a_command_run_many_times() {
+        // Twenty rows for one command would fill the list rather than making it findable.
+        let store = Store::open_in_memory().unwrap();
+        for i in 0..5 {
+            store
+                .upsert_block(&block_at("cargo test", BlockStatus::Succeeded, None, i))
+                .unwrap();
+        }
+        store
+            .upsert_block(&block_at("cargo build", BlockStatus::Succeeded, None, 10))
+            .unwrap();
+
+        let hits = store.command_history(None, 50).unwrap();
+        assert_eq!(hits.len(), 2);
+        let test = hits.iter().find(|h| h.command == "cargo test").unwrap();
+        assert_eq!(test.uses, 5);
+    }
+
+    #[test]
+    fn reports_the_status_of_the_most_recent_run_not_the_best_one() {
+        // What someone wants to know before reusing a command is whether it worked *last
+        // time*. Reporting the best outcome would be reassuring and wrong.
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_block(&block_at("flaky", BlockStatus::Succeeded, None, 120))
+            .unwrap();
+        store
+            .upsert_block(&block_at("flaky", BlockStatus::Failed, None, 5))
+            .unwrap();
+
+        let hit = &store.command_history(None, 10).unwrap()[0];
+        assert_eq!(hit.last_status, "failed");
+        assert!(hit.failed_last_time());
+    }
+
+    #[test]
+    fn a_command_that_succeeded_most_recently_is_not_flagged() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_block(&block_at("ok", BlockStatus::Failed, None, 120))
+            .unwrap();
+        store
+            .upsert_block(&block_at("ok", BlockStatus::Succeeded, None, 5))
+            .unwrap();
+        assert!(!store.command_history(None, 10).unwrap()[0].failed_last_time());
+    }
+
+    #[test]
+    fn scopes_to_a_project_when_asked() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_block(&block_at(
+                "in-tervin",
+                BlockStatus::Succeeded,
+                Some("tervin"),
+                1,
+            ))
+            .unwrap();
+        store
+            .upsert_block(&block_at(
+                "in-other",
+                BlockStatus::Succeeded,
+                Some("other"),
+                2,
+            ))
+            .unwrap();
+
+        let scoped: Vec<String> = store
+            .command_history(Some("tervin"), 10)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.command)
+            .collect();
+        assert_eq!(scoped, vec!["in-tervin"]);
+        // And unscoped sees both, because "that command from the other repo" is the whole
+        // reason this beats a shell's own history.
+        assert_eq!(store.command_history(None, 10).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn an_empty_command_is_not_history() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_block(&block_at("   ", BlockStatus::Succeeded, None, 1))
+            .unwrap();
+        assert!(store.command_history(None, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_fresh_command_reads_as_recent() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_block(&block_at("just now", BlockStatus::Succeeded, None, 0))
+            .unwrap();
+        assert!(store.command_history(None, 10).unwrap()[0].age_hours < 1.0);
+    }
+
+    #[test]
+    fn frecency_prefers_what_you_actually_run() {
+        let hit = |uses, age_hours| CommandHit {
+            command: "x".to_string(),
+            uses,
+            age_hours,
+            last_status: "succeeded".to_string(),
+        };
+        // The case pure recency gets wrong.
+        assert!(hit(40, 3.0).frecency() > hit(1, 0.1).frecency());
+        // The case a pure count gets wrong.
+        assert!(hit(10, 2.0).frecency() > hit(90, 24.0 * 120.0).frecency());
+        // And a corrupt timestamp must still order rather than produce a NaN.
+        assert!(hit(0, f64::MAX).frecency().is_finite());
+    }
+
+    #[test]
+    fn no_query_filter_is_applied_so_a_fuzzy_match_can_still_find_things() {
+        // A SQL `LIKE` prefilter would exclude the non-contiguous matches a fuzzy search
+        // exists to find, which is why the query is not a parameter here at all.
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_block(&block_at(
+                "cargo test --workspace",
+                BlockStatus::Succeeded,
+                None,
+                1,
+            ))
+            .unwrap();
+        // `ctw` matches nothing by substring but everything by subsequence.
+        assert_eq!(store.command_history(None, 10).unwrap().len(), 1);
     }
 }

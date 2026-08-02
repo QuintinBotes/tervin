@@ -72,6 +72,13 @@ export function CommandPalette({ onNewPane }: { onNewPane: () => void }) {
       exitCode: null,
     });
     out.push({
+      id: "commands.history",
+      label: "Command history",
+      category: "Workspace",
+      hint: "⌘R",
+      run: () => s.setCommandHistory(true),
+    });
+    out.push({
       id: "commands.saved",
       label: "Saved commands",
       category: "Workspace",

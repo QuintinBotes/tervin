@@ -828,6 +828,25 @@ export const scrollbackLoad = (paneKey: string, program: string | null) =>
 export const colorSchemeSet = (dark: boolean) =>
   invoke<number>("color_scheme_set", { dark });
 
+/** One command from your history, ranked and with its last outcome. */
+export interface CommandSuggestion {
+  command: string;
+  uses: number;
+  age_hours: number;
+  /** True when the most recent run failed. */
+  failed_last_time: boolean;
+}
+
+/**
+ * Search every command Tervin has recorded.
+ *
+ * What a shell's `Ctrl-R` cannot do: it searches one shell's history, on one machine, with
+ * no idea whether the command worked. This spans panes and projects and says whether it
+ * succeeded last time.
+ */
+export const commandHistory = (query: string, project: string | null, limit = 40) =>
+  invoke<CommandSuggestion[]>("command_history", { query, project, limit });
+
 /** A directory offered for `cd`, ranked by match and frecency. */
 export interface DirSuggestion {
   path: string;

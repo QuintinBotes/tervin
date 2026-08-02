@@ -17,8 +17,8 @@ pub mod store;
 
 pub use builder::{BlockBuilder, BlockEvent};
 pub use model::{
-    Block, BlockOutput, BlockStatus, GitContext, ParsedDiagnostic, ParsedOutput, PathHit,
-    RecentDir, TestSummary,
+    Block, BlockOutput, BlockStatus, CommandHit, GitContext, ParsedDiagnostic, ParsedOutput,
+    PathHit, RecentDir, TestSummary,
 };
 pub use query::{BlockFilter, BlockSummary, SortOrder};
 pub use saved::{Parameter, SavedCommand};

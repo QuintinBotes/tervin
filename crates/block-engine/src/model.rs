@@ -317,3 +317,38 @@ impl RecentDir {
         f64::from(self.visits) * weight
     }
 }
+
+/// One distinct command from history, with what is known about it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CommandHit {
+    pub command: String,
+    /// How many times it has been run.
+    pub uses: u32,
+    /// Hours since the most recent run, at the moment it was read.
+    pub age_hours: f64,
+    /// The status of the *most recent* run. Not the best or the worst: what someone wants
+    /// to know before reusing a command is whether it worked last time.
+    pub last_status: String,
+}
+
+impl CommandHit {
+    /// Frecency, on the same bands as directories, for the same reason: neither how often
+    /// nor how recently works alone.
+    pub fn frecency(&self) -> f64 {
+        let weight = if self.age_hours < 24.0 {
+            4.0
+        } else if self.age_hours < 24.0 * 7.0 {
+            2.0
+        } else if self.age_hours < 24.0 * 30.0 {
+            1.0
+        } else {
+            0.4
+        };
+        f64::from(self.uses) * weight
+    }
+
+    /// Whether the last run failed, which is worth seeing before running it again.
+    pub fn failed_last_time(&self) -> bool {
+        self.last_status == "failed" || self.last_status == "interrupted"
+    }
+}
