@@ -761,6 +761,9 @@ impl Normalizer {
                             command: cmd.clone(),
                             exit_code,
                             duration_ms: duration_ms.unwrap_or(0),
+                            // Derived above from `is_error` and `interrupted`. Claude Code
+                            // never reports a status, so a Block from this shows none.
+                            exit_code_reported: false,
                             block_id: None,
                         },
                     ));

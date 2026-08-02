@@ -309,6 +309,9 @@ impl Normalizer {
                             command,
                             exit_code: if is_error { 1 } else { 0 },
                             duration_ms: duration,
+                            // Derived from a tool-call status: this path is a report that
+                            // the call failed, not a process exit status.
+                            exit_code_reported: false,
                             block_id: None,
                         },
                     ));
@@ -517,6 +520,9 @@ impl Normalizer {
                 command: command.to_string(),
                 exit_code,
                 duration_ms,
+                // A real status: this comes from waiting on the ACP terminal, which is
+                // why the summary above prints the number.
+                exit_code_reported: true,
                 block_id: None,
             },
         ));

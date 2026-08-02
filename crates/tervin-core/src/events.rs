@@ -322,6 +322,19 @@ pub enum EventPayload {
         command: String,
         exit_code: i32,
         duration_ms: u64,
+        /// Whether `exit_code` is what the runtime reported, or a value Tervin derived
+        /// from a success flag.
+        ///
+        /// The distinction matters once these become Blocks. An ACP terminal reports a
+        /// real status; Claude Code reports only success or failure, and the 0/1/130 in
+        /// `exit_code` is then Tervin's inference. A Block showing "exit 1" that no
+        /// runtime ever said is worse than one showing no exit code at all, so a Block
+        /// built from a derived value carries none.
+        ///
+        /// Defaults to false, which is the safe direction: an event from an older build
+        /// reads as "not reported" rather than as authoritative.
+        #[serde(default)]
+        exit_code_reported: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         block_id: Option<BlockId>,
     },
