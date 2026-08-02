@@ -461,6 +461,21 @@ function ShellSection() {
             {note}
           </div>
         ))}
+        {/* "No aliases" and "could not check" are the same empty list otherwise — and
+            they are not the same thing, because this is how a second agent account gets
+            discovered. */}
+        {env?.aliases && !env.aliases.enumerated && (
+          <div className="meta tone-amber" style={{ marginBottom: "var(--sp-1)" }}>
+            Tervin could not read your aliases, so any agent accounts defined by one were
+            not offered. This is not the same as having none.
+          </div>
+        )}
+        {env?.aliases?.enumerated &&
+          Object.keys(env.aliases.aliases).length === 0 && (
+            <div className="meta" style={{ marginBottom: "var(--sp-1)" }}>
+              Your shell reported no aliases.
+            </div>
+          )}
         <div style={{ maxHeight: 220, overflow: "auto", border: "1px solid var(--tervin-line)", borderRadius: "var(--radius-sm)" }}>
           {Object.entries(env?.aliases.aliases ?? {}).map(([name, expansion]) => (
             <div key={name} className="row" style={{ padding: "2px var(--sp-2)", gap: "var(--sp-2)" }}>
