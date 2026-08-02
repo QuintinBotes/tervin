@@ -1,5 +1,15 @@
 # Security
 
+> **In development, and that matters here.** Tervin has not been released, so this
+> threat model has never been tested against real use — only against the tests. Two
+> specifics worth stating plainly:
+>
+> - **Release builds are unsigned and unnotarised.** That needs a paid Apple Developer ID.
+>   Verify any download against `SHA256SUMS.txt` rather than trusting the source.
+> - **No third party has reviewed any of this.** The permission model is documented
+>   carefully and its limits are stated, but documented carefully is not the same as
+>   audited.
+
 ## Reporting a vulnerability
 
 Please report privately rather than in the issue tracker: open a

@@ -5,6 +5,9 @@ log says what changed, and this is for what it means to someone using it.
 
 ## Unreleased
 
+Everything below is unreleased. No version has been tagged and nothing has been published,
+so this is a record of what has been built rather than of what anyone can install.
+
 ### Saved commands, with the parts that change named
 
 - Half the commands anyone runs are a shape with one thing different: deploy to *this*

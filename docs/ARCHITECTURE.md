@@ -3,6 +3,10 @@
 This document is about *why*. The code says what it does; this says which decisions
 were load-bearing and what the alternatives cost.
 
+> **In development.** Tervin has not been released and its local data formats are not
+> stable. This document describes the code as it stands, including the parts that are
+> deliberately incomplete. See the [status notice](../README.md#status) in the README.
+
 ## The shape
 
 Ten Rust crates and one React app. The dependency direction is strictly one-way: no

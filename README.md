@@ -13,6 +13,34 @@ you about what they are doing.
 
 ---
 
+<a id="status"></a>
+
+> ## ⚠️ In development — not released
+>
+> **There is no release yet.** No version has been tagged, nothing is published to npm or
+> Homebrew, and the install commands below describe how distribution *will* work rather
+> than something you can run today. They are in the README because the pipeline that
+> performs them is written and reviewable, not because it has run.
+>
+> **Nothing here has been used in anger.** The test suite is substantial and the awkward
+> paths are covered deliberately, but a test suite is not a user. Expect to find things
+> that are wrong in ways no test anticipated.
+>
+> **Local data formats are not stable.** Blocks, Threads, prompt history and saved
+> sessions live in a SQLite database that gains columns as features land. Migrations are
+> written and tested, but a pre-1.0 schema is a moving target — do not treat that database
+> as an archive of anything you cannot lose.
+>
+> **macOS only, in practice.** The code is written for Unix generally and the PTY layer has
+> no macOS-specific assumptions, but macOS is the only platform anything has been run on.
+> "Should work on Linux" is not a claim, it is a guess.
+>
+> What *is* true is the documentation: where Tervin cannot do something — gate Codex,
+> guarantee a permission stop, produce an exit code no runtime reported — it says so, and
+> that is the part this project takes most seriously.
+
+---
+
 ## What it is
 
 Tervin is a desktop terminal for the way people actually work now: a shell in one
@@ -128,6 +156,10 @@ established fact), full command output, and anything not in the event stream —
 
 ## Installing
 
+**None of this works yet** — no version has been published. This section describes the
+distribution the release pipeline performs, so it can be reviewed before it runs. To try
+Tervin today, [build it from source](#building-it-yourself).
+
 ```sh
 npx tervin
 ```
@@ -171,7 +203,11 @@ Signing and notarising with an Apple Developer ID would remove the prompt from t
 two rows. It is not required for any of the others, and the release tooling reports
 plainly when a build is unsigned rather than leaving you to discover it at launch.
 
+<a id="building-it-yourself"></a>
+
 ## Building it yourself
+
+This is currently the only way to run Tervin.
 
 Requires Rust 1.82+, Node 20+, and a Unix-like OS (macOS is the tested platform).
 
@@ -210,10 +246,27 @@ TERVIN_LIVE_CLAUDE=1 cargo test -p agent-runtime -- the_real_cli_honours_a_refus
 
 ## Status
 
-Pre-1.0 and honest about it. The core is solid and well-tested; the edges are
-tracked in the issue list rather than papered over. macOS is the only platform
-currently exercised — the code is written for Unix generally, but "should work" is
-not the same as "is tested", so it does not claim Linux support yet.
+**In development. No release, no published package, no stable data format.** See the notice
+at the top — it is not boilerplate, it lists the specific things that are not finished.
+
+What is genuinely done and tested: the terminal core, the Block engine, the agent adapters
+(Claude Code, ACP, Codex, local models), session restore, prompt history, and the
+permission model including the parts where Tervin admits it cannot enforce anything.
+
+What is deliberately incomplete, and tracked rather than hidden:
+
+- **Signing and notarisation** need a paid Apple Developer ID. Until then the `.dmg` and
+  the Homebrew cask show a one-time Gatekeeper approval; `npx` and the source formula do
+  not, which is why they are recommended.
+- **CLI flag completions** — the largest remaining gap against Warp. The design question is
+  open, not the implementation: shipping spec data, executing `--help`, and asking the
+  user's shell all have real costs, and picking wrong is worse than waiting.
+- **SSH latency and reconnect indicators.** SSH exposes no round-trip time, so a number
+  here would be a measurement of something else wearing a latency label.
+- **Linux and Windows.** Not claimed, because not exercised.
+
+The commit history is the honest record: several commits exist because a test caught the
+implementation, and a few because a test was itself wrong. Both are labelled as such.
 
 ## Licence
 

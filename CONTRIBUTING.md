@@ -3,6 +3,10 @@
 Thanks for looking. This document is short on ceremony and specific about the two
 things that are genuinely unusual here: the honesty rule and the testing standard.
 
+> **In development.** Nothing is released yet, so there is no compatibility to preserve —
+> which makes this the best time to change something badly designed. A pull request that
+> replaces a decision is more welcome now than it will ever be again.
+
 ## Getting set up
 
 ```sh

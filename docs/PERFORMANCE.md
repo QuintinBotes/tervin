@@ -13,6 +13,10 @@ cargo bench -p rules-engine --bench classify
 Numbers from a different machine will differ. The *ratios* and the limits are the
 durable part.
 
+> **In development.** Tervin has not been released and its local data formats are not
+> stable. This document describes the code as it stands, including the parts that are
+> deliberately incomplete. See the [status notice](../README.md#status) in the README.
+
 ## The three paths that matter
 
 Only three places in Tervin are in a loop tight enough for a constant factor to be
