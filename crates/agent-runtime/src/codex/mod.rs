@@ -13,8 +13,10 @@
 //! See [`normalize`] for what the wire format was verified against, and what could not be.
 
 pub mod normalize;
+pub mod runtime;
 
 pub use normalize::CodexNormalizer;
+pub use runtime::{codex_capabilities, CodexRuntime};
 
 /// Flags Tervin passes to every `codex exec` run, and why.
 ///

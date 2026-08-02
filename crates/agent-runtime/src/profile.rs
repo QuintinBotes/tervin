@@ -263,6 +263,7 @@ pub fn import_candidates() -> Vec<ImportCandidate> {
         .into_iter()
         .chain(candidates_from_config_dirs())
         .chain(candidates_from_acp_agents())
+        .chain(candidates_from_codex())
     {
         if seen.contains(&candidate.profile.id) {
             continue;
@@ -274,6 +275,37 @@ pub fn import_candidates() -> Vec<ImportCandidate> {
 }
 
 /// Offer a profile for every installed ACP agent.
+/// Offer Codex when it is installed.
+///
+/// Offered rather than added: the source line says what Tervin can and cannot do with it,
+/// and a user who sees "cannot gate" before accepting is making an informed choice. A
+/// profile that appeared on its own would not give them that.
+fn candidates_from_codex() -> Vec<ImportCandidate> {
+    let binary = crate::codex::runtime::DEFAULT_BINARY;
+    let Some(path) = crate::which(binary) else {
+        return Vec::new();
+    };
+    vec![ImportCandidate {
+        profile: AgentProfile {
+            id: "codex".to_string(),
+            name: "Codex".to_string(),
+            runtime_id: "codex".to_string(),
+            binary: binary.to_string(),
+            // `exec --json` belongs to the adapter, not the profile: a user who removed
+            // it from here would get a session that produces no events at all.
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            model: None,
+            permission_mode: None,
+            badge: None,
+            sensitive: false,
+        },
+        source: format!(
+            "{path} (structured JSONL; Tervin reads it but cannot gate it — Codex's own sandbox decides)"
+        ),
+    }]
+}
+
 fn candidates_from_acp_agents() -> Vec<ImportCandidate> {
     crate::acp::known_acp_agents()
         .into_iter()

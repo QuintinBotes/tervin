@@ -14,8 +14,13 @@ A practical guide to the part that is genuinely different from other terminals.
 | Claude Code's own features: hooks, plugins, subagents, skills | **Claude Code (direct)** | Its full feature set, plus a hook-based gate that can refuse actions. |
 | Nothing leaving your machine | **a local model** | LM Studio, Ollama, vLLM, llama.cpp. Answers about your work; cannot act. |
 | An agent Tervin has never heard of | **Settings › Agents › Add an ACP agent** | Any ACP-speaking command becomes a full structured integration. |
-| Structured reading of Codex | **Codex** | `codex exec --json` is real JSONL: messages, commands, file changes and token counts arrive as data. Read-only — see below. |
+| Structured reading of Codex | **Codex** | `codex exec --json` is real JSONL: messages, commands, file changes and token counts arrive as data. Read-only: see below. |
 | A tool with no protocol at all | **a managed pane** | Full terminal fidelity, no structured events, and the Bridge panel says so. |
+
+## Codex
+
+Offered as a profile when `codex` is on PATH, under Settings › Agents. The offer states
+what Tervin can and cannot do with it *before* you accept, rather than after.
 
 ## Codex, and what it cannot do
 
@@ -28,13 +33,23 @@ a follow-up down, and no permission request to answer, because the sandbox and a
 policy are fixed by the flags it launched with. So **Tervin Rules cannot gate Codex**, and
 the capability strip says so rather than showing an approval control that would never fire.
 
-Two things the adapter is deliberately careful about:
+Each turn is a separate process: the first is `codex exec`, every follow-up is
+`codex exec resume <thread_id>`. The conversation continues because Codex keeps its own
+context: nothing is held open in between, which is why multi-turn is reported as partial
+rather than supported.
+
+**Tervin never passes `--dangerously-bypass-approvals-and-sandbox`.** Codex's own sandbox
+is the only thing between an agent and your filesystem here, since Tervin has no gate of
+its own to put in its place. Disabling it to make the integration look smoother would be
+trading your safety for our convenience.
+
+Three things the adapter is deliberately careful about:
 
 - **Codex's `exitCode` is nullable in its own schema.** When it reports one, the Block
   shows it. When it does not, the Block keeps the outcome and shows no number rather than
   inventing one.
 - **A declined command is a refusal, not a failure.** Codex's sandbox or approval policy
-  stopped it, so it never ran — and the event credits Codex, not Tervin Rules, because
+  stopped it, so it never ran, and the event credits Codex, not Tervin Rules, because
   claiming Tervin's gate fired when it did not would be the worst kind of wrong.
 
 ## Agents you start yourself
