@@ -129,14 +129,15 @@ function BlockRow({
           title={block.status}
           style={{ transform: "translateY(-1px)" }}
         />
+        {/* One truncated line, never wrapped. `wordBreak: break-word` with a flex
+            `min-width: 0` lets this shrink to almost nothing when the siblings claim
+            their width, and in a narrow pane the result is monospace text wrapping
+            one character per line. The full command is in the tooltip and in the
+            expanded body below, so nothing is lost by clipping here. */}
         <code
-          className="mono grow"
-          style={{
-            fontSize: "var(--text-control)",
-            minWidth: 0,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-          }}
+          className="mono truncate grow"
+          title={block.command || undefined}
+          style={{ fontSize: "var(--text-control)" }}
         >
           {block.command || "(no command recorded)"}
         </code>

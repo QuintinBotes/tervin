@@ -929,3 +929,66 @@ describe("ProjectInstructions", () => {
     expect(await findByText(/No instruction files here/)).toBeTruthy();
   });
 });
+
+describe("a timeline with a repeating event", () => {
+  /**
+   * The case this exists for: a broken hook fires once per tool call, so the real
+   * timeline held 106 byte-identical lines. The information in the hundredth repeat
+   * is the count, not the text.
+   */
+  function repeatingThread(): ThreadView {
+    const base: ThreadView = {
+      id: "thr_repeat",
+      profileId: "p1",
+      runtimeId: "claude-code",
+      title: "a thread whose hook keeps failing",
+      state: "executing",
+      events: [],
+      capabilities: null,
+      permissions: null,
+      info: null,
+      paneId: null,
+    };
+    const events = [];
+    for (let i = 0; i < 30; i++) {
+      events.push({
+        id: `e${i}`,
+        thread_id: base.id,
+        ts: new Date(Date.now() + i * 10).toISOString(),
+        summary: "PreToolUse:Bash failed (exit 1) — Tervin hook: Tervin did not answer within 5s.",
+        payload: { type: "tool.failed" },
+      });
+    }
+    // One different event in the middle, so the run must break rather than swallow it.
+    events.splice(15, 0, {
+      id: "different",
+      thread_id: base.id,
+      ts: new Date().toISOString(),
+      summary: "cargo test --workspace",
+      payload: { type: "command.completed" },
+    });
+    return { ...base, events: events as unknown as ThreadView["events"] };
+  }
+
+  it("collapses a run into one row with a count instead of 30 identical lines", async () => {
+    const t = repeatingThread();
+    useWorkspace.setState({ threads: { [t.id]: t }, activeThreadId: t.id });
+    const { findAllByText, queryAllByText } = render(<ThreadPanel />);
+
+    // Two runs of 15, split by the interleaved event, so two count chips.
+    const chips = await findAllByText(/^×15$/);
+    expect(chips.length).toBe(2);
+
+    // And the identical line is rendered twice, not thirty times.
+    const lines = queryAllByText(/did not answer within 5s/);
+    expect(lines.length).toBe(2);
+  });
+
+  it("keeps the event that interrupted the run", async () => {
+    // Collapsing must never drop an event: only consecutive identical ones merge.
+    const t = repeatingThread();
+    useWorkspace.setState({ threads: { [t.id]: t }, activeThreadId: t.id });
+    const { findByText } = render(<ThreadPanel />);
+    expect(await findByText("cargo test --workspace")).toBeTruthy();
+  });
+});

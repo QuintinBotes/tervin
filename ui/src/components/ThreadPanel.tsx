@@ -135,6 +135,28 @@ export function ThreadPanel() {
     });
   }, [thread, showReasoning]);
 
+  /**
+   * Collapse runs of identical consecutive events into one row with a count.
+   *
+   * A failing hook fires once per tool call, so a broken gate produced 106
+   * byte-identical lines and a timeline nobody could read. The information in the
+   * hundredth repeat is the number, not the text. Only *consecutive* identical
+   * events collapse, so ordering is never rearranged and an interleaved event
+   * always breaks the run.
+   */
+  const grouped = useMemo(() => {
+    const out: { event: (typeof visible)[number]; count: number }[] = [];
+    for (const event of visible) {
+      const last = out[out.length - 1];
+      if (last && sameEvent(last.event, event)) {
+        last.count += 1;
+      } else {
+        out.push({ event, count: 1 });
+      }
+    }
+    return out;
+  }, [visible]);
+
   async function send() {
     const text = prompt.trim();
     if (!text || busy) return;
@@ -232,8 +254,8 @@ export function ThreadPanel() {
           </div>
         ) : (
           <>
-            {visible.map((event) => (
-              <TimelineRow key={event.id} event={event} />
+            {grouped.map(({ event, count }) => (
+              <TimelineRow key={event.id} event={event} repeated={count} />
             ))}
             <div ref={endRef} />
           </>
@@ -678,7 +700,22 @@ function CapabilityStrip({ caps }: { caps: api.Capabilities }) {
   );
 }
 
-function TimelineRow({ event }: { event: api.TervinEvent }) {
+/**
+ * Two consecutive events are "the same" when a reader would learn nothing from the
+ * second. Deliberately compares the rendered summary rather than the payload: an id
+ * and a timestamp always differ, and it is the visible line that becomes noise.
+ */
+function sameEvent(a: api.TervinEvent, b: api.TervinEvent): boolean {
+  return a.payload.type === b.payload.type && a.summary === b.summary;
+}
+
+function TimelineRow({
+  event,
+  repeated = 1,
+}: {
+  event: api.TervinEvent;
+  repeated?: number;
+}) {
   const [open, setOpen] = useState(false);
   const kind = event.payload.type;
   const risk = (event.payload as { risk?: api.RiskAssessment }).risk;
@@ -713,6 +750,15 @@ function TimelineRow({ event }: { event: api.TervinEvent }) {
         >
           {event.summary}
         </span>
+        {repeated > 1 && (
+          <span
+            className="chip tabular"
+            style={{ flex: "none" }}
+            title={`This happened ${repeated} times in a row. The timestamp shown is the first.`}
+          >
+            ×{repeated}
+          </span>
+        )}
         {risk && risk.level !== "low" && (
           <button
             className={`chip tone-${risk.level === "critical" ? "red" : "amber"}`}
