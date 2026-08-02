@@ -156,23 +156,34 @@ established fact), full command output, and anything not in the event stream, an
 
 ## Installing
 
-**None of this works yet**: no version has been published. This section describes the
-distribution the release pipeline performs, so it can be reviewed before it runs. To try
-Tervin today, [build it from source](#building-it-yourself).
+Either of these, whichever you already have:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/QuintinBotes/tervin/main/packaging/install.sh | sh
+```
 
 ```sh
 npx tervin
 ```
 
-That is the route to prefer, and not only for convenience. macOS applies its
-`com.apple.quarantine` attribute in the *downloading application*: a browser sets it,
-`curl` and Node do not. So a build fetched by `npx` opens normally, while the identical
-file downloaded through a browser hits Gatekeeper's "unidentified developer" wall and
-needs approving in System Settings. Checksums are baked into the published npm package,
-so npm is what vouches for the binary.
+Both open with **no Gatekeeper dialog at all**, and that is not luck. Tervin is not signed
+with an Apple Developer ID, because that costs $99 a year and this is an open-source project.
+It turns out not to matter for most routes, for a reason worth understanding:
+
+macOS applies the `com.apple.quarantine` attribute in the **downloading application**, not in
+the kernel. A browser sets it. `curl` and Node do not. So the identical bytes fetched by the
+installer script or by `npx` carry only `com.apple.provenance` and launch normally, while the
+same file downloaded through a browser is quarantined and refuses to open on first launch.
+
+Verified rather than assumed: `xattr` on a `curl` download of a release asset shows
+`com.apple.provenance` and nothing else.
+
+Neither route ever strips quarantine on your behalf. Doing that is how people learn to wave
+away a warning that matters, and it is unnecessary here because nothing was quarantined.
 
 `npx tervin --install` copies it into `/Applications`; `--where` prints the cached
-bundle; `--clean` removes it.
+bundle; `--clean` removes it. The installer script takes `--version`, `--prefix` and
+`--uninstall`, and never uses `sudo`.
 
 ### Homebrew
 
@@ -182,26 +193,45 @@ assumption; the two-argument form takes any URL:
 
 ```sh
 brew tap quintinbotes/tervin https://github.com/QuintinBotes/tervin
-brew install --cask tervin     # prebuilt, one Gatekeeper approval
-brew install --formula tervin  # compiles locally, nothing to approve
+
+brew install --formula tervin   # compiles locally, nothing to approve
+brew install --cask tervin      # prebuilt, but see below
 ```
+
+Prefer the formula if you have a Rust and Node toolchain: it builds locally, so nothing is
+quarantined and there is nothing to approve. It costs a few minutes.
+
+The cask is prebuilt and faster, but **Homebrew quarantines cask downloads itself**, so macOS
+will ask you to approve it once. Either approve it in System Settings, Privacy & Security, or
+install with `brew install --cask --no-quarantine tervin` if you would rather make that
+decision up front. Tervin does not make it for you.
 
 One repository rather than two, so the packaging is reviewed in the same pull request
 as the code it packages.
 
-### Other routes, and what each costs you
+### Every route, and what each costs you
+
+Ordered best to worst:
 
 | Route | Gatekeeper prompt? | Notes |
 | --- | --- | --- |
-| `npx tervin` | **No** | Nothing to approve. Needs Node 20+. |
-| `brew install --formula tervin` | **No** | Compiles locally, so nothing is quarantined. Needs a Rust and Node toolchain and a few minutes. |
+| `curl … install.sh \| sh` | **No** | Verifies the published checksum and refuses to install without it. Needs nothing but `curl`. |
+| `npx tervin` | **No** | Checksums are baked into the npm package. Needs Node 20+. |
+| `brew install --formula tervin` | **No** | Compiles locally. Needs a Rust and Node toolchain and a few minutes. |
 | Build from source | **No** | Same reason. |
-| `brew install --cask tervin` | Yes | Homebrew marks cask downloads quarantined. One-time approval. |
-| `.dmg` from GitHub Releases | Yes | Browser downloads are quarantined. One-time approval. |
+| `cargo install --git …` | **No** | Same reason. |
+| `brew install --cask tervin` | Yes, once | Homebrew quarantines cask downloads. `--no-quarantine` skips it if you prefer. |
+| `.dmg` from a browser | Yes, once | The worst route, and only there because people expect it. A browser sets quarantine, so macOS shows the unidentified-developer wall. Use one of the rows above instead. |
 
-Signing and notarising with an Apple Developer ID would remove the prompt from the last
-two rows. It is not required for any of the others, and the release tooling reports
-plainly when a build is unsigned rather than leaving you to discover it at launch.
+**Tervin will not be signed with an Apple Developer ID.** $99 a year to remove a one-time
+dialog from the two least-recommended rows is not a good trade for an open-source project, and
+five of the seven routes above have no dialog at all. The release tooling reports plainly that
+a build is unsigned rather than leaving you to discover it at launch.
+
+If you specifically want the `.dmg` and the dialog gone, the honest answer is to use the
+installer script instead. If you want to know why the dialog appeared, it is macOS working
+correctly on an unsigned application, and it is not something Tervin should quietly defeat on
+your behalf.
 
 <a id="building-it-yourself"></a>
 
@@ -258,9 +288,9 @@ permission model including the parts where Tervin admits it cannot enforce anyth
 
 What is deliberately incomplete, and tracked rather than hidden:
 
-- **Signing and notarisation** need a paid Apple Developer ID. Until then the `.dmg` and
-  the Homebrew cask show a one-time Gatekeeper approval; `npx` and the source formula do
-  not, which is why they are recommended.
+- **Builds are not signed, and will not be.** A Developer ID costs $99 a year to remove a
+  one-time dialog from the two least-recommended install routes, while five routes have no
+  dialog at all. See the install table above for which is which.
 - **CLI flag completions**: the largest remaining gap against Warp. The design question is
   open, not the implementation: shipping spec data, executing `--help`, and asking the
   user's shell all have real costs, and picking wrong is worse than waiting.

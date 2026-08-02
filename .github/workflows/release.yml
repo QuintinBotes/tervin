@@ -148,12 +148,24 @@ jobs:
             ## Install
 
             ```sh
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/packaging/install.sh | sh
+            ```
+
+            Or, if you have Node:
+
+            ```sh
             npx tervin
             ```
 
-            No Gatekeeper prompt on that route: macOS applies quarantine in the
-            *downloading application*, and Node does not set it. A browser download of
-            the `.dmg` below **is** quarantined and needs approving in System Settings.
+            **No Gatekeeper prompt on either route.** macOS applies quarantine in the
+            *downloading application*, and neither `curl` nor Node sets it. The `.dmg`
+            below **is** quarantined if you download it in a browser, and needs approving
+            in System Settings, which is why it is the least recommended option.
+
+            Tervin is not signed with an Apple Developer ID and will not be, so the
+            checksum is the only thing vouching for a binary. The installer script and the
+            npm package both verify it against `SHA256SUMS.txt` and refuse to install
+            without it.
 
             Building from source is also unquarantined:
 
@@ -169,6 +181,7 @@ jobs:
             target/universal-apple-darwin/release/bundle/dmg/*.dmg
             target/universal-apple-darwin/release/bundle/dmg/*.tar.gz
             target/universal-apple-darwin/release/bundle/dmg/SHA256SUMS.txt
+            packaging/install.sh
 
   npm:
     # After the release, because the installer downloads from it. Publishing a package
