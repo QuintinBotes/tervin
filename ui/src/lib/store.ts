@@ -187,6 +187,7 @@ export function overlayOpen(state: WorkspaceState): boolean {
     state.paletteOpen ||
     state.searchOpen ||
     state.settingsOpen ||
+    state.connectionsOpen ||
     state.pendingApprovals.length > 0
   );
 }
@@ -199,6 +200,8 @@ interface WorkspaceState {
   paletteOpen: boolean;
   searchOpen: boolean;
   settingsOpen: boolean;
+  /** The Connections overlay: SSH hosts, tmux sessions, serial ports. */
+  connectionsOpen: boolean;
 
   // terminal canvas
   tabs: Tab[];
@@ -261,6 +264,7 @@ interface WorkspaceActions {
   setPalette: (open: boolean) => void;
   setSearch: (open: boolean) => void;
   setSettings: (open: boolean) => void;
+  setConnections: (open: boolean) => void;
 
   addPane: (pane: Pane, tabId?: string) => void;
   /**
@@ -298,6 +302,14 @@ interface WorkspaceActions {
   appendThreadEvent: (event: api.TervinEvent) => void;
   setThreadState: (threadId: string, state: api.ThreadState) => void;
   setActiveThread: (threadId: string | null) => void;
+  /**
+   * Load a Thread that is not in memory, from the event store.
+   *
+   * Needed because a Thread can be reached from prompt history long after its session
+   * ended — the events are persisted, but the in-memory view only holds Threads this run
+   * has seen.
+   */
+  openStoredThread: (threadId: string) => Promise<void>;
   refreshThreadInfo: (threadId: string) => Promise<void>;
 
   stageAttachment: (attachment: Record<string, unknown>) => void;
@@ -332,6 +344,7 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   paletteOpen: false,
   searchOpen: false,
   settingsOpen: false,
+  connectionsOpen: false,
 
   tabs: [],
   panes: {},
@@ -370,6 +383,7 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   setPalette: (paletteOpen) => set({ paletteOpen }),
   setSearch: (searchOpen) => set({ searchOpen }),
   setSettings: (settingsOpen) => set({ settingsOpen }),
+  setConnections: (connectionsOpen) => set({ connectionsOpen }),
   setHandoff: (pendingHandoff) => set({ pendingHandoff }),
 
   // ------------------------------------------------------------------ panes
@@ -680,6 +694,46 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
 
   setActiveThread: (activeThreadId) => set({ activeThreadId }),
 
+  openStoredThread: async (threadId) => {
+    const existing = get().threads[threadId];
+    if (existing && existing.events.length > 0) {
+      set({ activeThreadId: threadId });
+      return;
+    }
+
+    const events = await api.threadEvents(threadId, 5000);
+    // The title comes from the first thing recorded, which is what the Thread was for.
+    // The payload type is `Record<string, unknown>`, so every consumer narrows by hand.
+    // Cast rather than assert: a stored event from an older version may not have the
+    // field, and a missing title is better than a crash reading history.
+    const prompt = events.find((e) => e.payload.type === "user.prompted");
+    const promptText =
+      typeof prompt?.payload.text === "string" ? prompt.payload.text : null;
+    const title = promptText ? promptText.slice(0, 80) : "Thread";
+    const started = events.find((e) => e.payload.type === "thread.started");
+
+    // Capabilities and permissions are left null on purpose: this Thread is not running,
+    // so there is no session to report them, and inventing them would put controls on
+    // screen that cannot work.
+    set((s) => ({
+      activeThreadId: threadId,
+      threads: {
+        ...s.threads,
+        [threadId]: {
+          id: threadId,
+          profileId: existing?.profileId ?? "",
+          runtimeId: started?.agent.runtime_id ?? existing?.runtimeId ?? "",
+          title: existing?.title ?? title,
+          state: lastThreadState(events) ?? "completed",
+          events,
+          capabilities: existing?.capabilities ?? null,
+          permissions: existing?.permissions ?? null,
+          info: existing?.info ?? null,
+        },
+      },
+    }));
+  },
+
   refreshThreadInfo: async (threadId) => {
     try {
       const info = await api.threadInfo(threadId);
@@ -737,6 +791,25 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
 }));
 
 /** Render an IPC error as one readable sentence. */
+/**
+ * The last state a stored Thread reached.
+ *
+ * Read from the event stream rather than assumed, because a Thread that was interrupted
+ * or disconnected must not be shown as completed — the whole point of an append-only
+ * record is that it says what actually happened.
+ */
+function lastThreadState(events: api.TervinEvent[]): api.ThreadState | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const payload = events[i]!.payload;
+    if (payload.type === "thread.state") {
+      return typeof payload.state === "string" ? (payload.state as api.ThreadState) : null;
+    }
+    if (payload.type === "thread.completed") return "completed";
+    if (payload.type === "thread.failed") return "failed";
+  }
+  return null;
+}
+
 export function describeError(error: unknown): string {
   if (typeof error === "string") return error;
   if (error && typeof error === "object" && "message" in error) {
