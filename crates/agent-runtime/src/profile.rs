@@ -332,6 +332,53 @@ fn candidates_from_acp_agents() -> Vec<ImportCandidate> {
         .collect()
 }
 
+/// How long the user's shell gets to list its aliases before Tervin stops caring.
+const ALIAS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Run a command, collect its standard output, and give up after `limit`.
+///
+/// `std::process::Command` offers no timeout, and the one thing worse than a
+/// discovery that finds nothing is a discovery that never returns. Returns `None`
+/// if the command could not start, ran out of time, or was killed — all of which
+/// mean the same thing to every caller here: no answer.
+fn run_briefly(command: &mut std::process::Command, limit: std::time::Duration) -> Option<Vec<u8>> {
+    let mut child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+
+    // Drain the pipe on another thread. A child that fills the pipe buffer blocks
+    // until someone reads it, so waiting for exit without draining would be waiting
+    // for a child that is itself waiting for us.
+    let mut pipe = child.stdout.take()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut pipe, &mut buf);
+        let _ = tx.send(buf);
+    });
+
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            // Out of time, or a child that cannot be waited on at all. Kill it either
+            // way: whatever the rc files are still doing, nobody is waiting for it now.
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+
+    rx.recv_timeout(limit).ok()
+}
+
 /// Ask the user's shell for its aliases and parse agent-launching ones.
 ///
 /// Runs `$SHELL -ic alias`, which sources the user's rc files. That is the only
@@ -344,15 +391,19 @@ fn candidates_from_aliases() -> Vec<ImportCandidate> {
         _ => return Vec::new(),
     };
 
-    let output = std::process::Command::new(&shell)
-        .args(["-ic", "alias"])
-        .stdin(std::process::Stdio::null())
-        .output();
-
-    let Ok(output) = output else {
+    // An interactive shell runs whatever the user's rc files contain, and some of
+    // that waits: version managers that hit the network, prompt frameworks, a stray
+    // `read`. Aliases are a convenience, so a shell that will not answer promptly is
+    // simply one that offers nothing — never a reason to keep the caller waiting.
+    let Some(stdout) = run_briefly(
+        std::process::Command::new(&shell)
+            .args(["-ic", "alias"])
+            .stdin(std::process::Stdio::null()),
+        ALIAS_TIMEOUT,
+    ) else {
         return Vec::new();
     };
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = String::from_utf8_lossy(&stdout);
 
     text.lines()
         .filter_map(parse_alias_line)
@@ -568,6 +619,46 @@ fn shell_words_split(input: &str) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_command_that_answers_is_read_in_full() {
+        let out = run_briefly(
+            std::process::Command::new("sh").args(["-c", "echo alias-one; echo alias-two"]),
+            std::time::Duration::from_secs(10),
+        )
+        .expect("a prompt command should produce output");
+        let text = String::from_utf8_lossy(&out);
+        assert!(
+            text.contains("alias-one") && text.contains("alias-two"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_command_that_hangs_is_abandoned_rather_than_waited_on() {
+        // The bug this exists to prevent: `$SHELL -ic alias` sources rc files, and an
+        // rc file that blocks used to block the whole agents view behind it.
+        let started = std::time::Instant::now();
+        let out = run_briefly(
+            std::process::Command::new("sh").args(["-c", "sleep 30"]),
+            std::time::Duration::from_millis(300),
+        );
+        assert!(out.is_none(), "a hung command has no answer to give");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "gave up after {:?}, which is not giving up",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_command_that_does_not_exist_is_not_an_answer() {
+        assert!(run_briefly(
+            &mut std::process::Command::new("tervin-no-such-binary-anywhere"),
+            std::time::Duration::from_secs(5),
+        )
+        .is_none());
+    }
 
     #[test]
     fn parses_a_config_dir_alias() {

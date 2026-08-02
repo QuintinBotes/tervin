@@ -782,13 +782,19 @@ pub async fn audit_recent(
 
 // ============================================================ agents
 
+/// What the user configured, read from disk and nothing else.
+///
+/// Deliberately separate from [`AgentsDiscovery`]. These two answer different
+/// questions — "what did I set up?" and "what is on this machine?" — and only the
+/// second one has to leave the process to find out. Serving them together meant a
+/// profile the user had written by hand could not be shown until every agent binary
+/// on the machine had been probed, and could not be shown *at all* if one of those
+/// probes failed: the whole command returned an error, the UI had no profiles, and
+/// it said "No agent profile configured" to a user with five of them.
 #[derive(Debug, Serialize)]
 pub struct AgentsOverview {
     pub profiles: Vec<AgentProfile>,
     pub default_profile: Option<String>,
-    pub discovered: Vec<agent_runtime::Discovery>,
-    /// Profiles Tervin found but has not adopted.
-    pub import_candidates: Vec<ImportCandidate>,
     /// Where the files the UI mentions actually are.
     ///
     /// Resolved rather than written into the interface, because the location differs by
@@ -798,8 +804,29 @@ pub struct AgentsOverview {
     pub mcp_path: String,
 }
 
+/// What Tervin found on the machine. Every field here costs a subprocess.
+#[derive(Debug, Serialize)]
+pub struct AgentsDiscovery {
+    pub discovered: Vec<agent_runtime::Discovery>,
+    /// Profiles Tervin found but has not adopted.
+    pub import_candidates: Vec<ImportCandidate>,
+}
+
+/// The user's own configuration. Cheap, local, and cannot fail on a missing binary.
 #[tauri::command]
 pub async fn agents_overview(state: State<'_, Arc<AppState>>) -> Result<AgentsOverview> {
+    let profiles = state.profiles.read().clone();
+    Ok(AgentsOverview {
+        default_profile: profiles.default_profile,
+        profiles: profiles.profiles,
+        profiles_path: tervin_core::paths::abbreviate(&ProfileConfig::path()),
+        mcp_path: tervin_core::paths::abbreviate(&agent_runtime::McpConfig::path()),
+    })
+}
+
+/// What is installed. Slow and failure-prone by nature, which is why it stands alone.
+#[tauri::command]
+pub async fn agents_discovery(state: State<'_, Arc<AppState>>) -> Result<AgentsDiscovery> {
     // Snapshot under the lock, then release it: discovery spawns processes and
     // must not hold the registry lock while it awaits them.
     let adapters = state.agents.read().snapshot();
@@ -811,8 +838,13 @@ pub async fn agents_overview(state: State<'_, Arc<AppState>>) -> Result<AgentsOv
         discovered.push(agent_runtime::registry::discover_generic(agent).await);
     }
 
-    let profiles = state.profiles.read().clone();
-    let existing: Vec<String> = profiles.profiles.iter().map(|p| p.id.clone()).collect();
+    let existing: Vec<String> = state
+        .profiles
+        .read()
+        .profiles
+        .iter()
+        .map(|p| p.id.clone())
+        .collect();
 
     let import_candidates = blocking(move || {
         Ok(agent_runtime::profile::import_candidates()
@@ -822,13 +854,9 @@ pub async fn agents_overview(state: State<'_, Arc<AppState>>) -> Result<AgentsOv
     })
     .await?;
 
-    Ok(AgentsOverview {
-        default_profile: profiles.default_profile.clone(),
-        profiles: profiles.profiles.clone(),
+    Ok(AgentsDiscovery {
         discovered,
         import_candidates,
-        profiles_path: tervin_core::paths::abbreviate(&ProfileConfig::path()),
-        mcp_path: tervin_core::paths::abbreviate(&agent_runtime::McpConfig::path()),
     })
 }
 
