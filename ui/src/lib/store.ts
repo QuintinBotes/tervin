@@ -434,6 +434,23 @@ function reportColorScheme(themeId: string): void {
 let tabCounter = 0;
 const nextTabId = () => `tab-${++tabCounter}`;
 
+/**
+ * A short, readable label from arbitrary prompt text.
+ *
+ * Cuts at a word boundary rather than mid-word, and collapses whitespace so a
+ * pasted multi-line prompt does not become a title with newlines in it.
+ */
+export function summarise(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (flat.length <= max) return flat;
+  const cut = flat.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  // Only respect the boundary if it leaves something substantial, otherwise a
+  // single long token would truncate to almost nothing.
+  const body = lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut;
+  return `${body.replace(/[\s,;:.\-]+$/, "")}…`;
+}
+
 export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get) => ({
   surface: "terminal",
   listColumnWidth: 320,
@@ -932,7 +949,10 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
     const prompt = events.find((e) => e.payload.type === "user.prompted");
     const promptText =
       typeof prompt?.payload.text === "string" ? prompt.payload.text : null;
-    const title = promptText ? promptText.slice(0, 80) : "Thread";
+    // 80 characters cut mid-word produced titles like "Repo conventions and traps -
+    // Comments explai", which is unreadable in a narrow list and worse in a
+    // sentence. Shorter, and cut at a word boundary.
+    const title = promptText ? summarise(promptText, 48) : "Thread";
     const started = events.find((e) => e.payload.type === "thread.started");
 
     // Capabilities and permissions are left null on purpose: this Thread is not running,
