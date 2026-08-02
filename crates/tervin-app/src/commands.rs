@@ -1493,6 +1493,64 @@ pub async fn settings_set(
     blocking(move || store.kv_set(&key, &value).map_err(CommandError::from)).await
 }
 
+/// Save a pane's terminal output so it can be restored.
+///
+/// Keyed by the pane id that the *saved session* records, because pane ids are generated
+/// per run — restoring maps the old key onto whichever pane takes its place.
+#[tauri::command]
+pub async fn scrollback_save(
+    state: State<'_, Arc<AppState>>,
+    pane_key: String,
+    program: Option<String>,
+    cwd: Option<String>,
+    body: String,
+) -> Result<()> {
+    let store = state.store.clone();
+    blocking(move || {
+        store
+            .save_scrollback(&pane_key, program.as_deref(), cwd.as_deref(), &body)
+            .map_err(CommandError::from)
+    })
+    .await
+}
+
+/// Load a pane's saved output.
+///
+/// Returns nothing when the pane is now running a different program, so a shell's history
+/// cannot be restored into an SSH session.
+#[tauri::command]
+pub async fn scrollback_load(
+    state: State<'_, Arc<AppState>>,
+    pane_key: String,
+    program: Option<String>,
+) -> Result<Option<String>> {
+    let store = state.store.clone();
+    blocking(move || {
+        store
+            .load_scrollback(&pane_key, program.as_deref())
+            .map_err(CommandError::from)
+    })
+    .await
+}
+
+/// Forget saved output for panes the session no longer contains.
+///
+/// Called after a session is saved, so closing a pane stops its output being kept. An
+/// empty list clears everything, which is what turning session restore off must do.
+#[tauri::command]
+pub async fn scrollback_retain(
+    state: State<'_, Arc<AppState>>,
+    pane_keys: Vec<String>,
+) -> Result<usize> {
+    let store = state.store.clone();
+    blocking(move || {
+        store
+            .retain_scrollback(&pane_keys)
+            .map_err(CommandError::from)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn workspace_save(
     state: State<'_, Arc<AppState>>,
