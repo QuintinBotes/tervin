@@ -7,6 +7,27 @@ log says what changed, and this is for what it means to someone using it.
 
 Everything below is unreleased. No version has been tagged and nothing has been published,
 so this is a record of what has been built rather than of what anyone can install.
+### Codex, read over `codex exec --json`
+
+- Codex prints structured JSONL, so every message, command, file change and token count
+  arrives as **data** rather than text scraped off a screen.
+- **Built against the real thing, not documentation.** `codex exec --json` was run against
+  codex-cli 0.146.0 and its stdout captured; the item vocabulary comes from
+  `codex app-server generate-json-schema`, which the binary generates itself.
+- One finding that matters more than it looks: **stdout is pure JSONL and the tracing logs
+  go to stderr.** A reader that merged them would try to parse a log line as an event on
+  every reconnect.
+- **Where the format was genuinely ambiguous, both readings are accepted.** The `exec`
+  envelope is snake_case and the app-server schema is camelCase, and *both* spellings of
+  `commandExecution` appear in the binary, so every field carries an alias for the other
+  casing rather than a guess that might be wrong.
+- **Codex is read-only, and Tervin says so.** `codex exec` is one non-interactive turn:
+  nothing to send a follow-up down, and no permission request to answer. Tervin Rules
+  cannot gate it, and the capability strip states that instead of offering an approval
+  control that would never fire.
+- Its `exitCode` is nullable in its own schema, so a command with no reported status keeps
+  its outcome and shows no number. A **declined** command is reported as a refusal rather
+  than a failure, it never ran, and credited to Codex rather than to Tervin Rules.
 
 ### Saved commands, with the parts that change named
 

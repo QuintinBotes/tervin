@@ -103,6 +103,11 @@ impl RuntimeRegistry {
             None => ClaudeCodeRuntime::new(),
         }));
 
+        // Codex takes no arbiter, for the same reason a model endpoint does not: there is
+        // nothing to gate. `codex exec` never asks permission, so handing it an arbiter
+        // would imply a decision that never happens.
+        runtimes.push(Arc::new(crate::codex::CodexRuntime::new()));
+
         for spec in known_acp_agents() {
             runtimes.push(Arc::new(match arbiter.clone() {
                 Some(a) => AcpRuntime::new(spec).with_arbiter(a),
@@ -300,6 +305,9 @@ mod tests {
                 spec.runtime_id
             );
         }
+        // Codex is not an ACP agent but must still be reachable, or the adapter exists
+        // and nothing can select it.
+        assert!(registry.get("codex").is_some(), "codex has no adapter");
     }
 
     #[test]
