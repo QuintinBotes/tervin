@@ -23,10 +23,21 @@ import { useEffect, useState } from "react";
 import * as api from "../lib/api";
 import { useWorkspace } from "../lib/store";
 import { BlocksPanel, formatBytes, formatDuration, toneForStatus } from "./BlocksPanel";
+import { PromptHistory } from "./PromptHistory";
 import { TwoColumn } from "../App";
+
+/**
+ * Two kinds of history, which are genuinely different things.
+ *
+ * Commands are what you ran; prompts are what you asked. They live on one surface because
+ * both answer "what was I doing" — and in separate views because a search that returns
+ * both is a search that returns neither well.
+ */
+type View = "commands" | "prompts";
 
 export function HistorySurface({ narrow }: { narrow: boolean }) {
   const s = useWorkspace();
+  const [view, setView] = useState<View>("commands");
   const [query, setQuery] = useState("");
   const [failuresOnly, setFailuresOnly] = useState(false);
   const [bookmarkedOnly, setBookmarkedOnly] = useState(false);
@@ -63,6 +74,26 @@ export function HistorySurface({ narrow }: { narrow: boolean }) {
     return () => clearTimeout(handle);
   }, [query, failuresOnly, bookmarkedOnly, thisProject, tag]);
 
+  if (view === "prompts") {
+    return (
+      <TwoColumn
+        narrow={narrow}
+        listLabel="Prompts"
+        leftWidth={s.listColumnWidth}
+        onResize={s.setListColumnWidth}
+        left={
+          <div className="col" style={{ minHeight: 0, width: "100%" }}>
+            <ViewSwitch view={view} onChange={setView} />
+            <div className="grow" style={{ minHeight: 0, display: "flex" }}>
+              <PromptHistory />
+            </div>
+          </div>
+        }
+        right={<PromptsAbout />}
+      />
+    );
+  }
+
   return (
     <TwoColumn
       narrow={narrow}
@@ -71,8 +102,9 @@ export function HistorySurface({ narrow }: { narrow: boolean }) {
       onResize={s.setListColumnWidth}
       left={
         <div className="col" style={{ minHeight: 0, width: "100%" }}>
+          <ViewSwitch view={view} onChange={setView} />
           <div className="panel-header">
-            <span className="label">History</span>
+            <span className="label">Commands</span>
             <span className="meta truncate grow">
               {s.blocks.length === 0
                 ? "Nothing captured yet"
@@ -231,6 +263,94 @@ function HistoryDetail() {
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** Commands or prompts. Two buttons rather than a dropdown: there are only two. */
+function ViewSwitch({
+  view,
+  onChange,
+}: {
+  view: View;
+  onChange: (view: View) => void;
+}) {
+  return (
+    <div
+      className="row"
+      role="tablist"
+      style={{
+        flex: "none",
+        padding: "var(--sp-2) var(--sp-3) 0",
+        gap: "var(--sp-1)",
+      }}
+    >
+      {(
+        [
+          ["commands", "Commands", "Every command you ran, searchable by its output"],
+          ["prompts", "Prompts", "Everything you asked an agent, and what it answered"],
+        ] as const
+      ).map(([id, label, hint]) => (
+        <button
+          key={id}
+          role="tab"
+          aria-selected={view === id}
+          className="btn btn-xs"
+          title={hint}
+          onClick={() => onChange(id)}
+          style={{
+            borderColor: view === id ? "var(--tervin-accent)" : undefined,
+            color: view === id ? "var(--tervin-accent)" : undefined,
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * What prompt history is for, stated where someone will read it.
+ *
+ * The detail column would otherwise be empty, and this is the one thing about the feature
+ * that is not self-evident: that a shell cannot do it, and that the two histories are
+ * kept on different terms.
+ */
+function PromptsAbout() {
+  return (
+    <div className="col" style={{ minHeight: 0, width: "100%" }}>
+      <div className="panel-header">
+        <span className="label">About prompt history</span>
+      </div>
+      <div
+        className="grow"
+        style={{ overflow: "auto", minHeight: 0, padding: "var(--sp-6)", textWrap: "pretty" }}
+      >
+        <p style={{ margin: 0, fontSize: "var(--text-body)" }}>
+          A shell records what you typed. No agent records what you <em>asked</em> in a
+          form you can search — a session ends and the conversation goes with it.
+        </p>
+        <p style={{ marginTop: "var(--sp-4)", fontSize: "var(--text-body)" }}>
+          Every Thread's prompts and replies are kept here, searchable by their text,
+          whichever agent produced them. Reasoning passages are left out: they are long,
+          model-specific, and would bury what you wrote under a model's thinking about it.
+        </p>
+        <div className="meta" style={{ marginTop: "var(--sp-6)" }}>
+          <div className="label" style={{ marginBottom: "var(--sp-2)" }}>
+            The two histories are kept differently
+          </div>
+          <div>
+            <strong>Commands</strong> are never deleted. A command and its output are
+            small and stay useful for years.
+          </div>
+          <div style={{ marginTop: "var(--sp-1)" }}>
+            <strong>Prompts</strong> expire after a window, thirty days by default,
+            because a transcript is large and stops being useful quickly. The control is
+            at the bottom of the list.
+          </div>
+        </div>
       </div>
     </div>
   );

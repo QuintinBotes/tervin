@@ -509,6 +509,41 @@ export const blockSetNote = (blockId: string, note: string | null) =>
 
 export const blockTagsAll = () => invoke<string[]>("block_tags_all");
 
+/** One prompt or agent reply found by search. */
+export interface PromptHit {
+  event_id: string;
+  thread_id: string | null;
+  /** `user.prompted` or `agent.message`. */
+  kind: string;
+  text: string;
+  ts: string;
+  runtime_id: string;
+  project: string | null;
+}
+
+/**
+ * Search past prompts and agent replies.
+ *
+ * The gap this fills: a shell keeps command history, and no agent keeps a searchable
+ * record of what you asked it — sessions end and the conversation goes with them.
+ * Reasoning passages are excluded, because they would swamp a search for something you
+ * actually wrote.
+ */
+export const promptsSearch = (query: string, limit: number) =>
+  invoke<PromptHit[]>("prompts_search", { query, limit });
+
+export interface RetentionInfo {
+  /** Days of agent history kept. Zero means nothing is pruned. */
+  days: number;
+  default_days: number;
+}
+
+export const historyRetention = () => invoke<RetentionInfo>("history_retention");
+
+/** Change the window, pruning immediately. Returns how many events went. */
+export const historySetRetention = (days: number) =>
+  invoke<number>("history_set_retention", { days });
+
 /** One entry in a directory listing. */
 export interface DirEntry {
   name: string;
