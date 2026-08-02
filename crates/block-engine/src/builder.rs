@@ -17,7 +17,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use terminal_core::{CommandMeta, PendingMarker, PtyChunk, ShellSignal};
+use terminal_core::{AgentActivity, CommandMeta, PendingMarker, PtyChunk, ShellSignal};
 use tervin_core::{BlockId, PaneId, SessionId, ThreadId};
 
 /// What the builder produces as it observes a pane.
@@ -37,6 +37,25 @@ pub enum BlockEvent {
     /// Surfaced rather than performed: honouring it blindly would let anything
     /// running — including a process on a remote host — take the local clipboard.
     ClipboardRequested { selection: String, bytes: Vec<u8> },
+    /// An agent running inside the pane reported its own lifecycle.
+    ///
+    /// Carried through the Block engine because it arrives in the same byte stream
+    /// and the builder is what already sees every signal — but it is not a Block.
+    /// The pane id travels with it so the app layer can say *which* pane an agent
+    /// is working in, which is the only reason to surface it at all.
+    AgentActivity {
+        pane_id: PaneId,
+        activity: AgentActivity,
+    },
+    /// A program asked for a desktop notification via OSC 777.
+    ///
+    /// Surfaced, never raised here: a long build finishing is worth a banner, and
+    /// a process deciding that for itself is not.
+    NotificationRequested {
+        pane_id: PaneId,
+        title: String,
+        body: String,
+    },
 }
 
 /// Where the builder is in the prompt/command cycle.
@@ -301,6 +320,25 @@ impl BlockBuilder {
                 events.push(BlockEvent::ClipboardRequested {
                     selection: selection.clone(),
                     bytes: bytes.clone(),
+                });
+            }
+
+            ShellSignal::AgentActivity { activity } => {
+                // Deliberately does not touch Block state. An agent's TUI runs as
+                // one long-lived command, and treating a prompt as a command
+                // boundary would chop that Block into fragments while the agent is
+                // still running.
+                events.push(BlockEvent::AgentActivity {
+                    pane_id: self.pane_id.clone(),
+                    activity: activity.clone(),
+                });
+            }
+
+            ShellSignal::Notification { title, body } => {
+                events.push(BlockEvent::NotificationRequested {
+                    pane_id: self.pane_id.clone(),
+                    title: title.clone(),
+                    body: body.clone(),
                 });
             }
 
