@@ -134,14 +134,29 @@ so npm is what vouches for the binary.
 `npx tervin --install` copies it into `/Applications`; `--where` prints the cached
 bundle; `--clean` removes it.
 
+### Homebrew
+
+This repository is its own tap, so the URL is given explicitly. The `homebrew-`
+repository prefix that `brew tap user/repo` looks for is only that shortcut's
+assumption; the two-argument form takes any URL:
+
+```sh
+brew tap quintinbotes/tervin https://github.com/QuintinBotes/tervin
+brew install --cask tervin     # prebuilt, one Gatekeeper approval
+brew install --formula tervin  # compiles locally, nothing to approve
+```
+
+One repository rather than two, so the packaging is reviewed in the same pull request
+as the code it packages.
+
 ### Other routes, and what each costs you
 
 | Route | Gatekeeper prompt? | Notes |
 | --- | --- | --- |
 | `npx tervin` | **No** | Nothing to approve. Needs Node 20+. |
-| `brew install --formula QuintinBotes/tervin/tervin` | **No** | Compiles locally, so nothing is quarantined. Needs a Rust and Node toolchain and a few minutes. |
+| `brew install --formula tervin` | **No** | Compiles locally, so nothing is quarantined. Needs a Rust and Node toolchain and a few minutes. |
 | Build from source | **No** | Same reason. |
-| `brew install --cask QuintinBotes/tervin/tervin` | Yes | Homebrew marks cask downloads quarantined. One-time approval. |
+| `brew install --cask tervin` | Yes | Homebrew marks cask downloads quarantined. One-time approval. |
 | `.dmg` from GitHub Releases | Yes | Browser downloads are quarantined. One-time approval. |
 
 Signing and notarising with an Apple Developer ID would remove the prompt from the last
