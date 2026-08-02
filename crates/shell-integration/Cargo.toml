@@ -1,0 +1,11 @@
+[package]
+name = "shell-integration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Optional shell hooks (zsh, bash, fish, PowerShell) reporting prompt boundaries, commands, exit status, duration, cwd, and git context."
+
+[dependencies]
+dirs = "6.0.0"
+serde.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,35 @@
+# Grouped and monthly on purpose.
+#
+# A repository that opens eleven pull requests every Monday trains its maintainer to
+# ignore them, which is worse than checking once a month and actually reading the diff.
+# Security advisories arrive separately and immediately regardless of this schedule.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 3
+    groups:
+      rust:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 3
+    groups:
+      js:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # xterm.js is the terminal. A minor bump can change rendering or key handling, and
+      # it is not something to take without running the editor tests by hand.
+      - dependency-name: "@xterm/*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    groups:
+      actions:
+        patterns: ["*"]

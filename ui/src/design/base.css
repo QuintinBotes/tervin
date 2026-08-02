@@ -1,0 +1,621 @@
+/*
+ * Tervin base styles.
+ *
+ * Every value here comes from docs/DESIGN.md. Colours appear exactly once, as
+ * custom properties written by `applyTheme`, so a theme switch is a single style
+ * recalculation and no component can hard-code a colour outside the palette.
+ *
+ * Two rules from the design system are enforced structurally rather than by
+ * convention, because they are the ones that break first under real content:
+ *
+ *   - Every flex child holding text gets `min-width: 0` (see `.grow`, `.truncate`).
+ *     Without it, a long path pushes its parent wider than the window.
+ *   - Every control is `white-space: nowrap; flex: 0 0 auto` (see `.btn`). Labels
+ *     never wrap inside a fixed height.
+ */
+
+:root {
+  /* Spacing: 4px base. The odd values are from the spec, not arbitrary. */
+  --sp-1: 4px;
+  --sp-2: 6px;
+  --sp-3: 8px;
+  --sp-4: 9px;
+  --sp-5: 11px;
+  --sp-6: 13px;
+  --sp-7: 16px;
+  --sp-8: 18px;
+  --sp-9: 22px;
+
+  /* Type scale. Nothing below 10.5px exists, so nothing below it can be used. */
+  --text-page: 27px;
+  --text-section: 18px;
+  --text-subsection: 14px;
+  --text-body: 13px;
+  --text-control: 12.5px;
+  --text-secondary: 12px;
+  --text-meta: 11.5px;
+  --text-label: 11px;
+  --text-chip: 10.5px;
+  --text-tag: 10px;
+
+  /* Control heights. */
+  --h-22: 22px;
+  --h-24: 24px;
+  --h-26: 26px;
+  --h-28: 28px;
+
+  /* Chrome geometry. */
+  --topbar-h: 42px;
+  --tabstrip-h: 29px;
+  --panelheader-h: 38px;
+  --statusrail-h: 25px;
+  --handle-w: 5px;
+
+  --radius-chip: 4px;
+  --radius-control: 5px;
+  --radius-panel: 8px;
+  --radius-system: 12px;
+
+  /* Motion: orientation and feedback only. */
+  --motion-fast: 150ms;
+  --motion-base: 180ms;
+  --motion-slow: 220ms;
+  --ease: cubic-bezier(0.2, 0, 0.2, 1);
+
+  /* The only shadow in the product. */
+  --shadow-overlay: 0 22px 56px rgba(0, 0, 0, 0.55);
+
+  --font-ui: "Geist", "Inter", system-ui, -apple-system, sans-serif;
+
+  /* Overridden at runtime from settings. */
+  --font-mono: "JetBrains Mono", "Berkeley Mono", "Iosevka", ui-monospace,
+    SFMono-Regular, Menlo, monospace;
+  --font-mono-size: 12.5px;
+  --font-mono-line-height: 1.55;
+  --mono-ligatures: none;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--tervin-bg);
+  color: var(--tervin-ink);
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Selection is enabled per surface, so a stray drag never selects chrome. */
+  user-select: none;
+}
+
+a {
+  color: var(--tervin-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--tervin-accent-hi);
+}
+
+/* Any number that updates in place lines up in a column. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-ligatures: var(--mono-ligatures);
+}
+
+/* 11px uppercase section label. */
+.label {
+  font-size: var(--text-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tervin-muted);
+}
+
+.meta {
+  font-size: var(--text-meta);
+  color: var(--tervin-muted);
+}
+
+.dim {
+  color: var(--tervin-dim);
+}
+
+/* ---------------------------------------------------------------- focus */
+
+:focus-visible {
+  outline: 1px solid var(--tervin-accent);
+  outline-offset: 1px;
+  border-radius: var(--radius-chip);
+}
+
+/* The terminal draws its own cursor; a ring around the surface is noise. */
+.terminal-surface:focus-visible,
+.terminal-surface :focus-visible {
+  outline: none;
+}
+
+/* --------------------------------------------------------------- motion */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* -------------------------------------------------------------- controls */
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  font-size: var(--text-control);
+  color: var(--tervin-ink);
+  background: var(--tervin-bg);
+  border: 1px solid var(--tervin-line);
+  border-radius: var(--radius-control);
+  padding: var(--sp-4) var(--sp-5);
+  user-select: text;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--tervin-dim);
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--tervin-accent);
+  outline: none;
+}
+
+/*
+ * Secondary button: the default. A view has at most one filled button, so the
+ * unmarked case must be the quiet one.
+ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--h-28);
+  padding: 0 12px;
+  border: 1px solid var(--tervin-line);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--tervin-ink);
+  font-size: var(--text-control);
+  /* Labels never wrap inside a fixed height. */
+  white-space: nowrap;
+  flex: 0 0 auto;
+  transition: background var(--motion-fast) var(--ease),
+    border-color var(--motion-fast) var(--ease),
+    color var(--motion-fast) var(--ease);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--tervin-raised);
+}
+
+.btn:disabled {
+  color: var(--tervin-dim);
+  border-color: var(--tervin-raised);
+  cursor: not-allowed;
+}
+
+.btn-sm {
+  height: var(--h-26);
+  padding: 0 11px;
+}
+
+.btn-xs {
+  height: var(--h-22);
+  padding: 0 var(--sp-3);
+  font-size: var(--text-meta);
+}
+
+/* One per view. */
+.btn-primary {
+  background: var(--tervin-accent);
+  border-color: var(--tervin-accent);
+  color: var(--tervin-bg);
+  font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--tervin-accent-hi);
+  border-color: var(--tervin-accent-hi);
+}
+
+/* Outlined, never filled: filled red reads as a state, not a choice. */
+.btn-danger {
+  border-color: var(--tervin-red);
+  color: var(--tervin-red);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--tervin-raised);
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--tervin-muted);
+  padding: 0 10px;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: transparent;
+  color: var(--tervin-ink);
+}
+
+/* 26px pills; the active one is filled and heavier. */
+.segment {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--h-26);
+  padding: 0 11px;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--tervin-muted);
+  font-size: var(--text-secondary);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.segment[aria-selected="true"] {
+  background: var(--tervin-raised);
+  color: var(--tervin-ink);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------ scrollbars */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--tervin-line);
+  border-radius: 6px;
+  border: 3px solid var(--tervin-bg);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--tervin-muted);
+}
+
+/* ----------------------------------------------------------- primitives */
+
+/*
+ * A horizontal group of controls: centred, because that is what a toolbar wants.
+ *
+ * Do NOT use this for a container whose children should fill its height — the
+ * centring silently shrinks them to content height. Use `.row-stretch`.
+ */
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+/* A horizontal container whose children fill the available height. */
+.row-stretch {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  min-height: 0;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* `min-width: 0` is the whole point: without it a long path overflows. */
+.grow {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Status marker, not a coloured card. */
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 6px;
+  background: var(--tervin-muted);
+}
+
+.dot-7 {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+}
+
+.dot-teal { background: var(--tervin-accent); }
+/* Success is the common case, so its marker is dimmed to stay quiet. */
+.dot-green { background: var(--tervin-green); opacity: 0.55; }
+.dot-amber { background: var(--tervin-amber); }
+.dot-red { background: var(--tervin-red); }
+.dot-muted { background: var(--tervin-muted); }
+
+.tone-teal { color: var(--tervin-accent); }
+.tone-green { color: var(--tervin-green); }
+.tone-amber { color: var(--tervin-amber); }
+.tone-red { color: var(--tervin-red); }
+.tone-muted { color: var(--tervin-muted); }
+.tone-ink2 { color: var(--tervin-ink-2); }
+
+/* Outlined in the state colour, transparent fill. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  height: 19px;
+  padding: 0 7px;
+  font-size: var(--text-chip);
+  border: 1px solid var(--tervin-muted);
+  border-radius: var(--radius-chip);
+  color: var(--tervin-muted);
+  white-space: nowrap;
+  flex: 0 0 auto;
+  background: transparent;
+}
+
+.chip-teal { border-color: var(--tervin-accent); color: var(--tervin-accent); }
+.chip-green { border-color: var(--tervin-green); color: var(--tervin-green); }
+.chip-amber { border-color: var(--tervin-amber); color: var(--tervin-amber); }
+.chip-red { border-color: var(--tervin-red); color: var(--tervin-red); }
+
+/* Machine vocabulary, so it looks like it. */
+.tag {
+  font-family: var(--font-mono);
+  font-size: var(--text-tag);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* 11px 13px, hairline bottom, 2px left border that turns teal when selected. */
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  width: 100%;
+  padding: var(--sp-5) var(--sp-6);
+  border-bottom: 1px solid var(--tervin-hairline);
+  border-left: 2px solid transparent;
+  background: transparent;
+  text-align: left;
+  min-width: 0;
+}
+
+.list-row:hover {
+  background: var(--tervin-panel);
+}
+
+.list-row[aria-selected="true"] {
+  border-left-color: var(--tervin-accent);
+  background: var(--tervin-panel);
+}
+
+/* Panel header: ~38px, an uppercase label plus a dim explanation. */
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--panelheader-h);
+  flex: 0 0 var(--panelheader-h);
+  padding: 0 var(--sp-6);
+  border-bottom: 1px solid var(--tervin-hairline);
+  min-width: 0;
+}
+
+/* Overlays carry the one shadow. */
+.overlay-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 11, 10, 0.6);
+  z-index: 100;
+}
+
+.overlay-surface {
+  background: var(--tervin-overlay);
+  border: 1px solid var(--tervin-line);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-overlay);
+  overflow: hidden;
+}
+
+/* 5px hit area, teal while hovered or dragging. */
+.handle-col,
+.handle-row {
+  flex: 0 0 var(--handle-w);
+  background: var(--tervin-raised);
+  transition: background var(--motion-fast) var(--ease);
+}
+
+.handle-col {
+  width: var(--handle-w);
+  cursor: col-resize;
+}
+
+.handle-row {
+  height: var(--handle-w);
+  cursor: row-resize;
+}
+
+.handle-col:hover,
+.handle-row:hover,
+.handle-col[data-dragging="true"],
+.handle-row[data-dragging="true"] {
+  background: var(--tervin-accent);
+}
+
+/* 30×17 track, 13px knob. */
+.toggle {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  border-radius: 9px;
+  background: #2a2e2c;
+  flex: 0 0 30px;
+  border: none;
+  transition: background var(--motion-fast) var(--ease);
+}
+
+.toggle[aria-checked="true"] {
+  background: var(--tervin-accent);
+}
+
+.toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--tervin-bg);
+  transition: left var(--motion-fast) var(--ease);
+}
+
+.toggle[aria-checked="true"]::after {
+  left: 15px;
+}
+
+/* Output, diffs, paths — anything a user will copy. */
+.selectable {
+  user-select: text;
+  cursor: text;
+}
+
+/* An empty state says what would appear and how to make it appear. */
+.empty {
+  padding: var(--sp-9);
+  color: var(--tervin-muted);
+  font-size: var(--text-secondary);
+  max-width: 62ch;
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: var(--text-chip);
+  color: var(--tervin-dim);
+}
+
+/* --------------------------------------------------------------- blocks */
+
+/*
+ * A Tervin Block.
+ *
+ * No card, no border, no background at rest — the row *is* the unit. Hover
+ * reveals it with a one-step background and a 2px left hairline, which is what
+ * lets a 200-row scrollback stay scannable while still being interactive.
+ */
+.block-row {
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--tervin-hairline);
+  transition: background var(--motion-fast) var(--ease),
+    border-color var(--motion-fast) var(--ease);
+}
+
+.block-row:hover,
+.block-row-open {
+  background: var(--tervin-block-hover);
+  border-left-color: var(--tervin-raised);
+}
+
+/* Actions appear on hover or focus, never as a permanent toolbar. */
+.block-action {
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease);
+}
+
+.block-row:hover .block-action,
+.block-row:focus-within .block-action,
+.block-row-open .block-action {
+  opacity: 1;
+}
+
+/* Guided mode: exactly one plain-English line, behind a 2px hairline. */
+.block-explain {
+  margin-top: 6px;
+  padding: 6px 10px 6px 16px;
+  border-left: 2px solid var(--tervin-line);
+  font-size: var(--text-secondary);
+  color: var(--tervin-muted);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+/* -------------------------------------------------------------- xterm */
+
+/*
+ * The terminal fills its host.
+ *
+ * xterm sizes itself from its container, and its container is a flex host, so it
+ * needs an explicit grow. Without this it measures zero on first layout and the
+ * pane opens with the wrong number of rows.
+ */
+.terminal-surface .xterm {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.xterm .xterm-viewport {
+  scrollbar-width: thin;
+}

@@ -1,0 +1,326 @@
+name: Release
+
+# One tag produces everything: a GitHub release, an npm package, and an updated Homebrew
+# tap. No checksum is pasted by hand — every one is computed here and injected, because a
+# checksum a human copies is a checksum that eventually stops matching the artefact it
+# claims to describe.
+on:
+  push:
+    tags: ["v*"]
+  # So the packaging can be exercised without cutting a tag. Publishing steps are gated
+  # on `github.ref_type == 'tag'`, so a manual run builds and verifies without shipping.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: macos-14
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tarball_name: ${{ steps.checksums.outputs.tarball_name }}
+      tarball_sha: ${{ steps.checksums.outputs.tarball_sha }}
+      dmg_sha: ${{ steps.checksums.outputs.dmg_sha }}
+      signed: ${{ steps.signing.outputs.signed }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # A universal binary, so one download works on Apple silicon and Intel.
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Version
+        id: version
+        # The tag is the source of truth, and it must agree with the manifest. A release
+        # whose artefacts disagree with its tag is worse than no release.
+        run: |
+          CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            if [ "$VERSION" != "$CARGO_VERSION" ]; then
+              echo "::error::tag v${VERSION} does not match the workspace version ${CARGO_VERSION}"
+              exit 1
+            fi
+          else
+            VERSION="$CARGO_VERSION"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${VERSION}"
+
+      - name: Test before building
+        # A release that was never tested is not a release.
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+          npx vitest run
+
+      - name: Build
+        env:
+          # Signing is skipped when the secrets are absent, so a fork still produces a
+          # working artefact — just an unsigned one, which the release notes state
+          # plainly rather than leaving a user to discover it at launch.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx tauri build --target universal-apple-darwin --bundles app,dmg
+
+      - name: Signing status
+        id: signing
+        run: |
+          APP="target/universal-apple-darwin/release/bundle/macos/Tervin.app"
+          if codesign -dv --verbose=2 "$APP" 2>&1 | grep -q "Authority=Developer ID"; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            spctl -a -vvv -t install "$APP" 2>&1 || \
+              echo "::warning::signed but not notarised — a browser download will still be warned about"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::unsigned. Browser and Homebrew-cask installs hit Gatekeeper; npx and the source formula do not."
+          fi
+
+      - name: Tarball for the npm and curl routes
+        # Those routes do not want a disk image — and a file fetched by curl or Node
+        # carries no quarantine attribute, which is what lets an unsigned build open
+        # without a Gatekeeper prompt at all.
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          BUNDLE="target/universal-apple-darwin/release/bundle"
+          tar -czf "${BUNDLE}/dmg/Tervin-${V}-macos-universal.tar.gz" -C "${BUNDLE}/macos" Tervin.app
+
+      - name: Checksums
+        id: checksums
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          cd target/universal-apple-darwin/release/bundle/dmg
+          shasum -a 256 *.dmg *.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+          TARBALL="Tervin-${V}-macos-universal.tar.gz"
+          DMG="$(ls *.dmg | head -1)"
+          echo "tarball_name=${TARBALL}" >> "$GITHUB_OUTPUT"
+          echo "tarball_sha=$(shasum -a 256 "$TARBALL" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "dmg_sha=$(shasum -a 256 "$DMG" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-bundles
+          path: target/universal-apple-darwin/release/bundle/dmg/*
+          retention-days: 7
+
+      - name: GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            ```sh
+            npx tervin
+            ```
+
+            No Gatekeeper prompt on that route: macOS applies quarantine in the
+            *downloading application*, and Node does not set it. A browser download of
+            the `.dmg` below **is** quarantined and needs approving in System Settings.
+
+            Building from source is also unquarantined:
+
+            ```sh
+            brew install --formula QuintinBotes/tervin/tervin
+            ```
+
+            **Signed with a Developer ID:** `${{ steps.signing.outputs.signed }}`
+
+            Verify any download against `SHA256SUMS.txt`.
+          files: |
+            target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            target/universal-apple-darwin/release/bundle/dmg/*.tar.gz
+            target/universal-apple-darwin/release/bundle/dmg/SHA256SUMS.txt
+
+  npm:
+    # After the release, because the installer downloads from it. Publishing a package
+    # that points at assets which do not exist yet gives everyone a broken `npx` for
+    # however long the gap lasts.
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Fill in the manifest
+        # Injected rather than committed: the checksum cannot be known before the build,
+        # and a placeholder in a published package makes every install warn that the
+        # download was not verified.
+        env:
+          V: ${{ needs.build.outputs.version }}
+          SHA: ${{ needs.build.outputs.tarball_sha }}
+          FILE: ${{ needs.build.outputs.tarball_name }}
+        run: |
+          cd packaging/npm
+          node -e '
+            const fs = require("fs");
+            const { V, SHA, FILE } = process.env;
+            const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+            manifest.version = V;
+            manifest.baseUrl = `https://github.com/QuintinBotes/tervin/releases/download/v${V}/`;
+            // Both architectures take the same universal build.
+            for (const key of ["darwin-arm64", "darwin-x64"]) {
+              manifest.artifacts[key] = { file: FILE, sha256: SHA };
+            }
+            fs.writeFileSync("manifest.json", JSON.stringify(manifest, null, 2) + "\n");
+
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            pkg.version = V;
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+          '
+          cat manifest.json
+
+      - name: Verify the installer against the real release
+        # The check that matters: fetch the published asset, confirm the checksum, and
+        # confirm the archive holds a bundle. Publishing without this ships an installer
+        # nobody has run.
+        run: |
+          cd packaging/npm
+          node -e '
+            const { execFileSync } = require("child_process");
+            const crypto = require("crypto");
+            const fs = require("fs");
+            const m = require("./manifest.json");
+            const a = m.artifacts["darwin-arm64"];
+            execFileSync("curl", ["-fsSL", "-o", "/tmp/t.tar.gz", m.baseUrl + a.file], {
+              stdio: "inherit",
+            });
+            const got = crypto
+              .createHash("sha256")
+              .update(fs.readFileSync("/tmp/t.tar.gz"))
+              .digest("hex");
+            if (got !== a.sha256) throw new Error(`checksum mismatch: ${got} vs ${a.sha256}`);
+            const list = execFileSync("tar", ["-tzf", "/tmp/t.tar.gz"], { encoding: "utf8" });
+            if (!list.includes("Tervin.app/")) throw new Error("no Tervin.app in the archive");
+            console.log("release asset verified");
+          '
+
+      - name: Check the token before using it
+        # `gh secret set` with nothing on stdin stores an empty value, and a secret
+        # cannot be read back to check. Without this, a blank or expired token surfaces
+        # as an opaque publish error after a successful build — so it is checked here,
+        # where the message can say which of the two it was.
+        id: token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::warning::NPM_TOKEN is empty or unset, so nothing was published to npm. Re-run: gh secret set NPM_TOKEN --repo QuintinBotes/tervin"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! WHO="$(npm whoami 2>&1)"; then
+            echo "::error::NPM_TOKEN was rejected by the registry: ${WHO}"
+            echo "  A granular token needs Read and write on the 'tervin' package, and must not have expired."
+            exit 1
+          fi
+          echo "publishing as ${WHO}"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        if: steps.token.outputs.publish == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: cd packaging/npm && npm publish --access public
+
+  homebrew:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Source tarball checksum
+        id: source
+        # GitHub generates this archive for the tag, and the formula builds from it — so
+        # its checksum has to be read rather than assumed.
+        run: |
+          V="${{ needs.build.outputs.version }}"
+          curl -fsSL -o /tmp/src.tar.gz \
+            "https://github.com/QuintinBotes/tervin/archive/refs/tags/v${V}.tar.gz"
+          echo "sha=$(sha256sum /tmp/src.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Update the tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          V: ${{ needs.build.outputs.version }}
+          DMG_SHA: ${{ needs.build.outputs.dmg_sha }}
+          SRC_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::warning::TAP_GITHUB_TOKEN is empty or unset, so the Homebrew tap was not updated. The GitHub release and npm package are unaffected."
+            echo "  Set it with: gh secret set TAP_GITHUB_TOKEN --repo QuintinBotes/tervin"
+            exit 0
+          fi
+
+          # Checked before the clone, so an expired or wrongly-scoped token says which of
+          # those it was instead of failing as an opaque git authentication error.
+          CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${TAP_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/QuintinBotes/homebrew-tervin)"
+          case "$CODE" in
+            200) : ;;
+            401) echo "::error::TAP_GITHUB_TOKEN was rejected — it is empty, malformed, or expired."; exit 1 ;;
+            404) echo "::error::TAP_GITHUB_TOKEN cannot see QuintinBotes/homebrew-tervin. A fine-grained PAT needs that repository selected with Contents: write."; exit 1 ;;
+            *)   echo "::error::unexpected ${CODE} checking the tap repository."; exit 1 ;;
+          esac
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/QuintinBotes/homebrew-tervin.git" tap
+          mkdir -p tap/Casks tap/Formula
+
+          sed -e "s|^  version \".*\"|  version \"${V}\"|" \
+              -e "s|REPLACE_WITH_ARM64_SHA256|${DMG_SHA}|" \
+              -e "s|REPLACE_WITH_X86_64_SHA256|${DMG_SHA}|" \
+              packaging/homebrew/tervin.rb > tap/Casks/tervin.rb
+
+          sed -e "s|v[0-9][0-9.]*\.tar\.gz|v${V}.tar.gz|" \
+              -e "s|REPLACE_WITH_SOURCE_TARBALL_SHA256|${SRC_SHA}|" \
+              packaging/homebrew/tervin-formula.rb > tap/Formula/tervin.rb
+
+          # No placeholder may survive. A tap that installs nothing is worse than a tap
+          # that was not updated, because it looks like it worked.
+          if grep -q "REPLACE_WITH" tap/Casks/tervin.rb tap/Formula/tervin.rb; then
+            echo "::error::a placeholder survived substitution"
+            exit 1
+          fi
+          ruby -c tap/Casks/tervin.rb
+          ruby -c tap/Formula/tervin.rb
+
+          cd tap
+          git config user.name "tervin-release"
+          git config user.email "release@tervin.dev"
+          git add Casks/tervin.rb Formula/tervin.rb
+          if git diff --cached --quiet; then
+            echo "tap already current"
+          else
+            git commit -m "tervin ${V}"
+            git push
+          fi

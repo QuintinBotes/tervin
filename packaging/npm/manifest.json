@@ -1,0 +1,12 @@
+{
+  "//": "What this npm version is allowed to install. Filled in by packaging/release.sh.",
+  "//1": "Checksums live here rather than being fetched, so npm — a channel with its own",
+  "//2": "integrity guarantees — is what vouches for the binary. Fetching a checksum from",
+  "//3": "the same host as the download would verify nothing.",
+  "version": "0.1.0",
+  "baseUrl": "https://github.com/QuintinBotes/tervin/releases/download/v0.1.0/",
+  "artifacts": {
+    "darwin-arm64": { "file": "Tervin-0.1.0-macos-universal.tar.gz", "sha256": "REPLACE_ME" },
+    "darwin-x64": { "file": "Tervin-0.1.0-macos-universal.tar.gz", "sha256": "REPLACE_ME" }
+  }
+}

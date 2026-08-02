@@ -1,0 +1,38 @@
+name: Feature request
+description: Something Tervin should be able to do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: |
+        The task, not the feature. "I can never find the flag that fixed a build" leads
+        somewhere better than "add a search box", because it leaves room for an answer
+        neither of us has thought of yet.
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: How you work around it now
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you had in mind
+      description: Optional. A rough shape is fine.
+
+  - type: checkboxes
+    id: honesty
+    attributes:
+      label: Before submitting
+      options:
+        - label: >-
+            This does not require Tervin to claim a capability it cannot deliver. Tervin
+            will not show a permission gate it cannot enforce or an event it had to
+            guess at — see the honesty rule in CONTRIBUTING.md.
+          required: true

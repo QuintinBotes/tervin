@@ -1,0 +1,25 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Node
+node_modules/
+.pnpm-store/
+
+# Build output
+/ui-dist
+/dist
+
+# Tauri
+/crates/tervin-app/gen
+
+# Local scratch
+*.log
+.DS_Store
+.probe/
+
+# Rust
+Cargo.lock.bak
+
+# macOS bundling
+*.dmg

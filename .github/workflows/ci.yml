@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A superseded run tells you nothing, and these jobs build a whole Tauri app.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Debug info is the bulk of the build output and nothing here reads a backtrace
+  # symbol table.
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  rust:
+    # macOS because that is the platform Tervin is tested on, and because the PTY
+    # tests drive the real vim and less that ship with it. Running them on Linux
+    # would be testing a different terminal.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        # Warnings are failures here. A warning nobody fixes is a warning everybody
+        # learns to scroll past.
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        # The suite drives real PTYs, real subprocesses, and real sockets, so it is
+        # slower than a unit-test suite and worth the wall-clock.
+        run: cargo test --workspace
+
+      - name: Confirm the terminal tests actually ran
+        # These skip when their binary is missing. A silent skip would let a
+        # regression in the most important tests pass unnoticed.
+        run: |
+          for tool in vim less zsh; do
+            command -v "$tool" >/dev/null || { echo "::error::$tool is missing, so its tests were skipped"; exit 1; }
+          done
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Types
+        # The tsconfig is at the repository root and already scopes itself to ui/.
+        # `-p ui` looks for a config that is not there and fails.
+        run: npx tsc --noEmit
+
+      - name: Tests
+        run: npx vitest run
+
+      - name: Build
+        run: npx vite build
+
+  bundle:
+    # Proves the thing users actually install still builds. Not gated on the other
+    # jobs: a bundling break is worth knowing about even when a test fails.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Bundle the app
+        run: npx tauri build --bundles app
