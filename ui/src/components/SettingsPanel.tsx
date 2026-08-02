@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "../lib/api";
 import { describeError, useWorkspace } from "../lib/store";
+import { ProjectInstructions } from "./ProjectInstructions";
 import { THEMES } from "../design/themes";
 
 type Section = "appearance" | "shell" | "agents" | "rules" | "about";
@@ -517,6 +518,13 @@ function AgentsSection() {
 
   return (
     <div className="col" style={{ gap: "var(--sp-5)" }}>
+      <Field
+        label="What this project already tells agents"
+        hint="Other tools write instructions into a repository, and Tervin reads them rather than asking you to repeat yourself. The useful part is the right-hand column: whether the runtime you pick will actually obey each file. The same CLAUDE.md is in force for Claude Code and ignored by Codex, so one undifferentiated list would let you believe a file is governing an agent that has never seen it."
+      >
+        <ProjectInstructions />
+      </Field>
+
       <Field
         label="Agent profiles"
         hint="One profile per install or account. Shell aliases cannot be used here: Tervin launches agents as direct child processes, so their environment is set explicitly. A profile fully determines which account runs — an ambient CLAUDE_CONFIG_DIR is cleared, never inherited."
