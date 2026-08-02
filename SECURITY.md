@@ -180,8 +180,9 @@ right-click, Open, once, or switch to a route that never triggers it.
 
 Stated rather than omitted:
 
-- **Linux is untested.** The code is written for Unix generally, but untested is not
-  supported.
+- **Linux is not yet claimed as supported.** The code is written for Unix generally; CI now
+  runs the suite on Linux, but CI green is not the same as supported. The platform claim
+  changes only after a person has actually used it for a day.
 - **A malicious agent is not contained.** Tervin gates what it is asked about. An agent
   that finds a path Tervin does not mediate, through a command that spawns another
   process, for instance, is limited by your OS, not by Tervin. Use the OS mechanisms

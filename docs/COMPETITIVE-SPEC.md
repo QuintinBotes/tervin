@@ -36,7 +36,7 @@ the transcript they already write. Commands an agent runs become Blocks.
 reason on every absence. `exit_code_reported` so a derived exit status is never shown as a
 measured one. Tervin never answers `allow` on a runtime's behalf.
 
-**Not present, and worth saying:** no Linux or Windows build, no signing (§5, a decision
+**Not present, and worth saying:** no Linux build (in CI; not yet claimed), no signing (§5, a decision
 rather than a gap), no kitty keyboard
 or graphics protocol, no scripting API, no plugin system, no team or sync features, no
 instant replay, no broadcast input, no vi-mode scrollback, no tmux control mode, no CLI flag
@@ -57,7 +57,7 @@ specific matters more than being reassuring.
 | --- | --- | --- |
 | **Cloud agents (Oz)** | Event-triggered autonomous agents in containers, reacting to webhooks, CI, cron and Slack. 20 to 40 concurrent depending on tier. | **Close it, differently.** See §4. |
 | **Warp Drive** | Team-synced storage of workflows, notebooks, environment profiles and MCP server lists. | **Close the local half, refuse the cloud half.** See §4.4. |
-| **Cross-platform** | GA on macOS, Linux (X11 and Wayland) and Windows, including ARM64. | **Close it.** §3.1. |
+| **Cross-platform** | GA on macOS, Linux (X11 and Wayland) and Windows, including ARM64. | **Linux: close it.** §3.1. **Windows: deliberately not.** §5. |
 | **CLI flag completion** | Subcommand and flag completion for hundreds of CLIs, no plugin needed. | **Close it.** §3.2. |
 | **Blocks over SSH** | Shell integration, blocks and AI survive an SSH hop and subshells (`nvm`, venv, `docker exec`, `kubectl exec`). | **Close it.** §3.3. |
 | **Notebook blocks** | A command, its output and prose, shared as a link with execution context. | Partly. §4.4. |
@@ -222,14 +222,13 @@ it. **§4.2: small work, real interoperability.**
 
 Ordered by value per unit of work, not by section number.
 
-### 3.1 Linux and Windows builds
+### 3.1 Linux build
 `P1.` The code is Unix-general already and the PTY layer has no macOS-specific assumptions;
-the honest blocker is that nothing has been *run* there. Add both to CI first, fix what
-breaks, and only then claim support. Windows needs ConPTY behind the `portable-pty`
-abstraction and a decision about shell integration, which has no equivalent to `ZDOTDIR`.
+the honest blocker is that nothing has been *run* there. Add Linux to CI first, fix what
+breaks, and only then claim support.
 
-*Exit criteria:* CI green on all three, and the README's platform claim changes only after a
-human has actually used each for a day.
+*Exit criteria:* CI green on both, and the README's platform claim changes only after a
+human has actually used Linux for a day.
 
 ### 3.2 CLI flag and subcommand completion
 `P1.` The largest remaining Warp gap. Three approaches, and this specification picks one:
@@ -537,13 +536,19 @@ Naming these matters as much as the roadmap, because each is a plausible request
   about covers the realistic threat, a substituted download. It does not cover a verified
   third-party identity, which is a real thing to be missing and is said plainly in
   `SECURITY.md` rather than glossed.
+- **Windows.** ConPTY covers the PTY layer, but shell integration has no equivalent to
+  `ZDOTDIR`, and the approach for automatic injection (§3.1) does not carry over. Tervin's
+  design assumes a Unix shell throughout: every agent runtime, every shell-integration hook,
+  and the completion design (§3.2) all depend on it. Solving that cleanly requires a design
+  that does not exist yet, and macOS plus Linux is a coherent scope. Windows is not in the
+  roadmap.
 - **Instant replay**, probably. Blocks answer the question people actually ask.
 
 ---
 
 ## 6. Ordered plan
 
-**Now: credibility.** Linux and Windows in CI (§3.1). Read `AGENTS.md` and existing MCP
+**Now: credibility.** Linux in CI (§3.1). Read `AGENTS.md` and existing MCP
 config (§4.2). CLI completion via the shell (§3.2).
 
 **Next: the two structural gaps.** Detach and reattach (§3.8). Parallel Threads with worktree

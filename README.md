@@ -304,7 +304,9 @@ What is deliberately incomplete, and tracked rather than hidden:
   user's shell all have real costs, and picking wrong is worse than waiting.
 - **SSH latency and reconnect indicators.** SSH exposes no round-trip time, so a number
   here would be a measurement of something else wearing a latency label.
-- **Linux and Windows.** Not claimed, because not exercised.
+- **Linux.** Not yet claimed. CI now runs the suite there; the platform claim changes only after
+  a person has actually used it for a day.
+- **Windows.** Not a target platform.
 
 The commit history is the honest record: several commits exist because a test caught the
 implementation, and a few because a test was itself wrong. Both are labelled as such.
