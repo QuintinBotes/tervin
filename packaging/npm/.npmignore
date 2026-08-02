@@ -1,0 +1,4 @@
+# `files` in package.json is the allowlist; this is a second line of defence, because a
+# published package cannot be unpublished cleanly.
+*.tgz
+node_modules/

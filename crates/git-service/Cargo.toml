@@ -1,0 +1,15 @@
+[package]
+name = "git-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Git status, diffs, hunks, branches, and worktrees via the git CLI."
+
+[dependencies]
+tervin-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

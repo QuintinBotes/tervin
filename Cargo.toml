@@ -1,0 +1,59 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tervin-core",
+    "crates/terminal-core",
+    "crates/shell-integration",
+    "crates/block-engine",
+    "crates/git-service",
+    "crates/file-index",
+    "crates/session-manager",
+    "crates/agent-runtime",
+    "crates/rules-engine",
+    "crates/tervin-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT"
+
+[workspace.dependencies]
+tervin-core = { path = "crates/tervin-core" }
+terminal-core = { path = "crates/terminal-core" }
+shell-integration = { path = "crates/shell-integration" }
+block-engine = { path = "crates/block-engine" }
+git-service = { path = "crates/git-service" }
+file-index = { path = "crates/file-index" }
+session-manager = { path = "crates/session-manager" }
+agent-runtime = { path = "crates/agent-runtime" }
+rules-engine = { path = "crates/rules-engine" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+# `net` is needed for the Unix socket that carries Claude Code hook decisions.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "net"] }
+async-trait = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+parking_lot = "0.12"
+regex = "1"
+shell-words = "1"
+base64 = "0.22"
+tracing = "0.1"
+
+[profile.dev]
+# Terminal work is latency-sensitive even in dev; optimise dependencies.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

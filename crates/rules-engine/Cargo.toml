@@ -1,0 +1,25 @@
+[package]
+name = "rules-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tervin Rules: provider-neutral risk classification, approval scopes, and an append-only audit log."
+
+[dependencies]
+tervin-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+parking_lot.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+regex.workspace = true
+shell-words.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+criterion = "0.8.2"
+
+[[bench]]
+name = "classify"
+harness = false

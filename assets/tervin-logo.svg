@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Tervin logo</title>
+  <desc id="desc">Two graphite tapered halves around a muted teal central seam</desc>
+  <rect width="128" height="128" rx="24" fill="#141514"/>
+  <path d="M39 22h20v84H39l11-42z" fill="#E5E8E5"/>
+  <path d="M89 22H69v84h20L78 64z" fill="#AEB5B1"/>
+  <path d="M61 22h6v84h-6z" fill="#68AEA5"/>
+  <path d="M61 56h6v16h-6z" fill="#8CC9C1"/>
+</svg>

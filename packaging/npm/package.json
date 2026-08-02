@@ -1,0 +1,15 @@
+{
+  "name": "tervin",
+  "version": "0.1.0",
+  "description": "The agent-native terminal workspace — install and launch with npx.",
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": { "tervin": "bin/tervin.js" },
+  "files": ["bin/", "manifest.json", "README.md"],
+  "engines": { "node": ">=20" },
+  "keywords": ["terminal", "agent", "claude", "acp", "developer-tools"],
+  "repository": { "type": "git", "url": "git+https://github.com/QuintinBotes/tervin.git" },
+  "homepage": "https://github.com/QuintinBotes/tervin",
+  "os": ["darwin"],
+  "cpu": ["arm64", "x64"]
+}
