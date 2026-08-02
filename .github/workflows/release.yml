@@ -231,12 +231,26 @@ jobs:
     needs: build
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    permissions:
+      # For npm trusted publishing over OIDC, which lets this job publish without a
+      # long-lived token in a secret. Requested at the job level rather than the
+      # workflow level so nothing else in this file can mint an identity token.
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # 22 rather than 20 because OIDC publishing needs Node 22.14 or newer.
+          node-version: 22
           registry-url: https://registry.npmjs.org
+
+      - name: An npm new enough to publish over OIDC
+        # The npm bundled with Node 22 predates trusted publishing. Without this the
+        # job silently falls back to token auth and the OIDC path is never exercised.
+        run: |
+          npm install -g npm@latest
+          echo "npm $(npm --version), node $(node --version)"
 
       - name: Fill in the manifest
         # Injected rather than committed: the checksum cannot be known before the build,
@@ -291,33 +305,76 @@ jobs:
             console.log("release asset verified");
           '
 
-      - name: Check the token before using it
-        # `gh secret set` with nothing on stdin stores an empty value, and a secret
-        # cannot be read back to check. Without this, a blank or expired token surfaces
-        # as an opaque publish error after a successful build — so it is checked here,
-        # where the message can say which of the two it was.
-        id: token
+      - name: Which credential is available
+        # Two ways to authenticate, and this reports which one will be used before the
+        # attempt rather than leaving a 403 to be decoded afterwards.
+        #
+        # A secret cannot be read back, so an empty `NPM_TOKEN` is indistinguishable
+        # from an unset one until it is used. Same class of problem as the Apple
+        # signing variables above: empty is not absent.
+        id: cred
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::warning::NPM_TOKEN is empty or unset, so nothing was published to npm. Re-run: gh secret set NPM_TOKEN --repo QuintinBotes/tervin"
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            if WHO="$(npm whoami 2>&1)"; then
+              echo "token present and accepted, as ${WHO}"
+              echo "token=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "::warning::NPM_TOKEN was rejected by the registry: ${WHO}"
+              echo "token=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "no NPM_TOKEN; relying on trusted publishing over OIDC"
+            echo "token=false" >> "$GITHUB_OUTPUT"
           fi
-          if ! WHO="$(npm whoami 2>&1)"; then
-            echo "::error::NPM_TOKEN was rejected by the registry: ${WHO}"
-            echo "  A granular token needs Read and write on the 'tervin' package, and must not have expired."
-            exit 1
-          fi
-          echo "publishing as ${WHO}"
-          echo "publish=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish
-        if: steps.token.outputs.publish == 'true'
         env:
+          # Passed when present. With npm 11.5.1 or newer and `id-token: write`, npm
+          # attempts OIDC first and uses this only as a fallback, so having both is
+          # safe rather than ambiguous.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: cd packaging/npm && npm publish --access public
+        run: |
+          cd packaging/npm
+          # Redirect and then print, rather than piping into `tee`. A pipeline's exit
+          # status is the *last* command's, so `npm publish | tee` reports tee's
+          # success and a 403 reads as a clean publish. That is worse than the bug it
+          # was added to diagnose, and a simulated 403 caught it here.
+          set +e
+          npm publish --access public > /tmp/publish.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/publish.log
+          if [ "$status" -eq 0 ]; then
+            echo "published"
+            exit 0
+          fi
+          # A 403 here has exactly two causes and they need different fixes, so the
+          # log says which rather than leaving the npm error to be interpreted. This
+          # is the failure that broke the first v0.1.0 attempt.
+          if grep -q "bypass 2fa" /tmp/publish.log; then
+            cat <<'EOF'
+          ::error::npm refused the publish because the account requires 2FA for writes.
+
+          Two ways to fix it, in order of preference:
+
+          1. Trusted publishing, which removes the secret entirely. On npmjs.com open
+             the tervin package settings, add a GitHub Actions trusted publisher with
+             repository QuintinBotes/tervin and workflow file release.yml, then delete
+             the NPM_TOKEN secret. This job already requests `id-token: write`.
+             Note: the package must exist before it can be configured, so the very
+             first publish has to happen another way.
+
+          2. A granular access token with "Bypass 2FA" enabled, which is off by
+             default at creation and cannot be added afterwards, so a new token is
+             needed. Give it Read and write on the tervin package, then
+             `gh secret set NPM_TOKEN --repo QuintinBotes/tervin`.
+          EOF
+            exit 1
+          fi
+          echo "::error::npm publish failed; see the log above"
+          exit 1
 
   homebrew:
     needs: build
