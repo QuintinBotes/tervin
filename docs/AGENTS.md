@@ -14,7 +14,28 @@ A practical guide to the part that is genuinely different from other terminals.
 | Claude Code's own features: hooks, plugins, subagents, skills | **Claude Code (direct)** | Its full feature set, plus a hook-based gate that can refuse actions. |
 | Nothing leaving your machine | **a local model** | LM Studio, Ollama, vLLM, llama.cpp. Answers about your work; cannot act. |
 | An agent Tervin has never heard of | **Settings › Agents › Add an ACP agent** | Any ACP-speaking command becomes a full structured integration. |
+| Structured reading of Codex | **Codex** | `codex exec --json` is real JSONL: messages, commands, file changes and token counts arrive as data. Read-only — see below. |
 | A tool with no protocol at all | **a managed pane** | Full terminal fidelity, no structured events, and the Bridge panel says so. |
+
+## Codex, and what it cannot do
+
+`codex exec --json` prints structured JSONL, so Tervin reads every message, command, file
+change and token count as data rather than scraping a screen. That makes it a strong
+integration for *reading*.
+
+It is not steerable. `codex exec` is one non-interactive turn: there is no channel to send
+a follow-up down, and no permission request to answer, because the sandbox and approval
+policy are fixed by the flags it launched with. So **Tervin Rules cannot gate Codex**, and
+the capability strip says so rather than showing an approval control that would never fire.
+
+Two things the adapter is deliberately careful about:
+
+- **Codex's `exitCode` is nullable in its own schema.** When it reports one, the Block
+  shows it. When it does not, the Block keeps the outcome and shows no number rather than
+  inventing one.
+- **A declined command is a refusal, not a failure.** Codex's sandbox or approval policy
+  stopped it, so it never ran — and the event credits Codex, not Tervin Rules, because
+  claiming Tervin's gate fired when it did not would be the worst kind of wrong.
 
 ## Agents you start yourself
 
