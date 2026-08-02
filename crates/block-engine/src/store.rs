@@ -196,6 +196,23 @@ impl Store {
                 json       TEXT NOT NULL
             );
 
+            -- Saved terminal output, so a pane can be restored with its history rather
+            -- than as an empty rectangle.
+            --
+            -- Keyed by the pane id recorded in the saved session, not by the id the pane
+            -- gets on the next run: those are generated per process, so restoring has to
+            -- map old key to new pane.
+            CREATE TABLE IF NOT EXISTS pane_scrollback (
+                pane_key   TEXT PRIMARY KEY,
+                saved_at   TEXT NOT NULL,
+                -- The command the pane was running. Restoring output from a different
+                -- program would put someone else's session on screen.
+                program    TEXT,
+                cwd        TEXT,
+                body       TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS pane_scrollback_saved ON pane_scrollback(saved_at);
+
             CREATE TABLE IF NOT EXISTS kv (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -825,6 +842,105 @@ impl Store {
         Ok(out)
     }
 
+    // ------------------------------------------------------- pane scrollback
+
+    /// Largest scrollback kept for one pane.
+    ///
+    /// A pane with 10,000 lines of colourised output serialises to megabytes, and a
+    /// dozen of those would make startup read tens of megabytes before drawing
+    /// anything. Restoring the most recent screenfuls is what people actually want;
+    /// the full history is what the Blocks store is for.
+    pub const MAX_SCROLLBACK_BYTES: usize = 256 * 1024;
+
+    /// Save a pane's output.
+    ///
+    /// Over-long text is trimmed from the *front*, keeping the end: the newest output
+    /// is what a restored pane should show, and cutting the tail would restore a
+    /// screen that stops mid-session.
+    pub fn save_scrollback(
+        &self,
+        pane_key: &str,
+        program: Option<&str>,
+        cwd: Option<&str>,
+        body: &str,
+    ) -> Result<()> {
+        let trimmed = if body.len() > Self::MAX_SCROLLBACK_BYTES {
+            let mut start = body.len() - Self::MAX_SCROLLBACK_BYTES;
+            // Never split a multi-byte character; the result is written to a terminal.
+            while start < body.len() && !body.is_char_boundary(start) {
+                start += 1;
+            }
+            &body[start..]
+        } else {
+            body
+        };
+
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT OR REPLACE INTO pane_scrollback (pane_key, saved_at, program, cwd, body)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                pane_key,
+                rfc3339(&tervin_core::now()),
+                program,
+                cwd,
+                trimmed
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Load a pane's saved output, if it was running the same program.
+    ///
+    /// The program is checked rather than trusted: a saved session is keyed by pane id,
+    /// and restoring a shell's history into what is now an SSH session — or an agent's
+    /// TUI — would show output that never belonged to it.
+    pub fn load_scrollback(&self, pane_key: &str, program: Option<&str>) -> Result<Option<String>> {
+        let conn = self.conn.lock();
+        let row: Option<(Option<String>, String)> = conn
+            .query_row(
+                "SELECT program, body FROM pane_scrollback WHERE pane_key = ?1",
+                params![pane_key],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        Ok(match row {
+            Some((saved_program, body)) if saved_program.as_deref() == program => Some(body),
+            _ => None,
+        })
+    }
+
+    /// Forget saved output for panes that no longer exist in the saved session.
+    ///
+    /// Without this the table grows for the lifetime of the install, holding output from
+    /// panes closed months ago — which is both waste and a needless amount of old
+    /// terminal output sitting on disk.
+    pub fn retain_scrollback(&self, keep: &[String]) -> Result<usize> {
+        let conn = self.conn.lock();
+        if keep.is_empty() {
+            return Ok(conn.execute("DELETE FROM pane_scrollback", [])?);
+        }
+        let placeholders = std::iter::repeat_n("?", keep.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("DELETE FROM pane_scrollback WHERE pane_key NOT IN ({placeholders})");
+        let params = rusqlite::params_from_iter(keep.iter());
+        Ok(conn.execute(&sql, params)?)
+    }
+
+    /// Drop saved output older than the retention window.
+    pub fn prune_scrollback(&self, days: u32) -> Result<usize> {
+        if days == 0 {
+            return Ok(0);
+        }
+        let cutoff = tervin_core::now() - chrono::Duration::days(days as i64);
+        let conn = self.conn.lock();
+        Ok(conn.execute(
+            "DELETE FROM pane_scrollback WHERE saved_at < ?1",
+            params![rfc3339(&cutoff)],
+        )?)
+    }
+
     // ------------------------------------------------------------ workspaces
 
     pub fn save_workspace(&self, id: &str, name: &str, json: &str) -> Result<()> {
@@ -1412,5 +1528,135 @@ mod migration_tests {
         // matched them, the first observed pane session would adopt an unrelated
         // Thread and append its events to someone else's conversation.
         assert!(store.thread_by_resume_id("").unwrap().is_none());
+    }
+}
+
+/// Saved terminal output for restoring a pane.
+#[cfg(test)]
+mod scrollback_tests {
+    use super::*;
+
+    #[test]
+    fn round_trips_output_for_the_same_program() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .save_scrollback("pane_1", Some("/bin/zsh"), Some("/proj"), "$ ls\nsrc\n")
+            .unwrap();
+        assert_eq!(
+            store.load_scrollback("pane_1", Some("/bin/zsh")).unwrap(),
+            Some("$ ls\nsrc\n".to_string())
+        );
+    }
+
+    #[test]
+    fn refuses_to_restore_output_from_a_different_program() {
+        // A saved session is keyed by pane id, and ids are reused across runs. Restoring
+        // a local shell's history into what is now an SSH session would put output on
+        // screen that never belonged to it — and on a remote host, that is misleading in
+        // a way that matters.
+        let store = Store::open_in_memory().unwrap();
+        store
+            .save_scrollback("pane_1", Some("/bin/zsh"), None, "local output")
+            .unwrap();
+
+        assert_eq!(store.load_scrollback("pane_1", Some("ssh")).unwrap(), None);
+        assert_eq!(store.load_scrollback("pane_1", None).unwrap(), None);
+    }
+
+    #[test]
+    fn a_plain_shell_pane_is_matched_by_its_absent_program() {
+        // A pane with no explicit program is the user's default shell. `None` has to
+        // match `None`, or an ordinary pane would never restore.
+        let store = Store::open_in_memory().unwrap();
+        store
+            .save_scrollback("pane_1", None, None, "output")
+            .unwrap();
+        assert_eq!(
+            store.load_scrollback("pane_1", None).unwrap(),
+            Some("output".to_string())
+        );
+    }
+
+    #[test]
+    fn over_long_output_keeps_the_end_and_stays_valid_utf8() {
+        let store = Store::open_in_memory().unwrap();
+        // Multi-byte, so a byte-wise trim would split a character and produce output
+        // that renders as a replacement glyph in the restored pane.
+        let filler = "é".repeat(Store::MAX_SCROLLBACK_BYTES);
+        let body = format!("{filler}THE-NEWEST-LINE");
+        store.save_scrollback("pane_1", None, None, &body).unwrap();
+
+        let loaded = store.load_scrollback("pane_1", None).unwrap().unwrap();
+        assert!(loaded.len() <= Store::MAX_SCROLLBACK_BYTES);
+        // The newest output is what a restored pane should show; cutting the tail would
+        // restore a screen that stops mid-session.
+        assert!(
+            loaded.ends_with("THE-NEWEST-LINE"),
+            "the end of the output was discarded"
+        );
+        // Valid UTF-8 by construction — `String` would not have survived otherwise, but
+        // assert the boundary was respected rather than relying on that.
+        assert!(!loaded.starts_with('\u{FFFD}'));
+    }
+
+    #[test]
+    fn saving_again_replaces_rather_than_accumulates() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .save_scrollback("pane_1", None, None, "first")
+            .unwrap();
+        store
+            .save_scrollback("pane_1", None, None, "second")
+            .unwrap();
+        assert_eq!(
+            store.load_scrollback("pane_1", None).unwrap(),
+            Some("second".to_string())
+        );
+    }
+
+    #[test]
+    fn retaining_drops_panes_that_are_no_longer_in_the_session() {
+        let store = Store::open_in_memory().unwrap();
+        for key in ["a", "b", "c"] {
+            store.save_scrollback(key, None, None, "x").unwrap();
+        }
+
+        let removed = store
+            .retain_scrollback(&["a".to_string(), "c".to_string()])
+            .unwrap();
+        assert_eq!(removed, 1);
+        assert!(store.load_scrollback("a", None).unwrap().is_some());
+        assert!(store.load_scrollback("b", None).unwrap().is_none());
+        assert!(store.load_scrollback("c", None).unwrap().is_some());
+    }
+
+    #[test]
+    fn retaining_nothing_clears_everything() {
+        // The case that matters: session restore turned off should not leave old
+        // terminal output sitting on disk.
+        let store = Store::open_in_memory().unwrap();
+        store.save_scrollback("a", None, None, "x").unwrap();
+        assert_eq!(store.retain_scrollback(&[]).unwrap(), 1);
+        assert!(store.load_scrollback("a", None).unwrap().is_none());
+    }
+
+    #[test]
+    fn pruning_respects_the_retention_window_and_forever_means_forever() {
+        let store = Store::open_in_memory().unwrap();
+        store.save_scrollback("recent", None, None, "x").unwrap();
+
+        // Nothing is old enough yet.
+        assert_eq!(store.prune_scrollback(30).unwrap(), 0);
+        // 0 days is "keep indefinitely", not "delete everything" — the same meaning the
+        // history retention control uses, and getting it backwards would silently
+        // destroy data.
+        assert_eq!(store.prune_scrollback(0).unwrap(), 0);
+        assert!(store.load_scrollback("recent", None).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_pane_with_no_saved_output_simply_has_none() {
+        let store = Store::open_in_memory().unwrap();
+        assert_eq!(store.load_scrollback("never-seen", None).unwrap(), None);
     }
 }
