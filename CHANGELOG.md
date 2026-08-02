@@ -5,6 +5,28 @@ log says what changed, and this is for what it means to someone using it.
 
 ## Unreleased
 
+### The workspace comes back when you reopen it
+
+- **Tabs, splits, each pane's directory and its recent output are restored on launch.**
+  Losing the arrangement you built — four panes, each in the right place, one on a remote
+  host — is the cost that keeps people running tmux under a terminal that cannot do this.
+- **The processes are not revived, and each pane says so.** They exited with the app. A
+  restored pane starts a fresh shell below its old output, under a line reading *"restored
+  from your last session; nothing above is running"* — because a restored screen is
+  otherwise indistinguishable from a live one, and someone could believe a command is
+  still going.
+- Restored output is written straight to the terminal and never through the PTY, so
+  replaying it cannot fabricate Blocks for commands that already ran.
+- A pane's saved output is only returned if the pane is running **the same program**. A
+  local shell's history cannot reappear inside an SSH session, which on a remote host
+  would be misleading in a way that matters.
+- Panes hosting an agent Tervin launched are deliberately left out: that session is gone,
+  and reopening it as a bare shell would be a different thing wearing its title. Those
+  Threads are on disk and reachable from History.
+- Output is capped, kept in the same local database as Blocks, ages out on the same
+  retention window, and is **deleted the moment the setting is switched off** — which the
+  UI says at the time rather than leaving to be discovered.
+
 ### Agents you start yourself are now part of the workspace
 
 - **Open a pane, type `claude`, and it becomes a Thread.** Titled after your first

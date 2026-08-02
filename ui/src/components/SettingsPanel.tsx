@@ -259,6 +259,26 @@ function AppearanceSection() {
       </div>
 
       <Field
+        label="Reopen last session"
+        hint="Tabs, splits, each pane's directory and its recent output come back on launch. The processes do not — they exited with the app — so each pane starts a fresh shell below its old output, and says so. Recent output is held in the same local database as Blocks, ages out on the same retention window, and is deleted as soon as this is switched off."
+      >
+        <Toggle
+          checked={a.restoreSession}
+          onChange={(restoreSession) => {
+            s.setAppearance({ restoreSession });
+            // Said now rather than discovered later: switching this off deletes what was
+            // saved, and that is not something to find out afterwards.
+            if (!restoreSession) {
+              s.pushNotice(
+                "Saved layout and terminal output have been deleted. New sessions will not be saved.",
+              );
+            }
+          }}
+          label={a.restoreSession ? "Reopening the last session" : "Starting with one empty pane"}
+        />
+      </Field>
+
+      <Field
         label="Layout"
         hint="Where the tab strip and the file explorer live. A vertical tab strip is the only arrangement that stays readable with twenty tabs open, which is why all four sides are offered rather than just top and bottom."
       >

@@ -22,6 +22,13 @@ import {
   type PaneNode,
   type SplitDirection,
 } from "./panes";
+import {
+  buildSnapshot,
+  parseSnapshot,
+  planRestore,
+  SESSION_ID,
+  type SavedPane,
+} from "./session";
 
 /**
  * The surfaces the top bar switches between.
@@ -70,6 +77,13 @@ export interface Pane {
   program?: string;
   args?: string[];
   env?: [string, string][];
+  /**
+   * The pane id from a saved session that this pane replaces.
+   *
+   * Set only while restoring. Pane ids are generated per run, so saved output is keyed
+   * by the old id and this is what maps it onto the pane that took its place.
+   */
+  restoreKey?: string;
   /**
    * True when the pane reaches beyond this machine.
    *
@@ -148,6 +162,18 @@ export interface Appearance {
    * rather than reaching for a different control every time.
    */
   newButtonAction: "tab" | "pane";
+  /**
+   * Reopen the last session's tabs, panes, directories and recent output.
+   *
+   * On by default. Losing the arrangement you built — four panes, each in the right
+   * directory, one on a remote host — is the cost that keeps people running tmux under a
+   * terminal that cannot do this.
+   *
+   * The processes are not revived, and each restored pane says so above its new prompt.
+   * Recent output is kept in the same local database as Blocks, ages out on the same
+   * retention window, and is cleared the moment this is switched off.
+   */
+  restoreSession: boolean;
 }
 
 export const DEFAULT_APPEARANCE: Appearance = {
@@ -172,6 +198,7 @@ export const DEFAULT_APPEARANCE: Appearance = {
   explorerSide: "left",
   explorerShowHidden: false,
   newButtonAction: "tab",
+  restoreSession: true,
 };
 
 /**
@@ -285,6 +312,22 @@ interface WorkspaceActions {
    * has exactly one pane" — belongs where it cannot be bypassed.
    */
   ensureFirstPane: (pane: Pane) => void;
+  /**
+   * Write the current layout and each pane's recent output to the local database.
+   *
+   * Takes the serialiser rather than importing it, so this module never depends on the
+   * terminal component that depends on it.
+   */
+  saveSession: (serialisePane: (paneId: string) => string | null) => Promise<void>;
+  /**
+   * Reopen the last session, returning false when there was nothing to reopen.
+   *
+   * `freshPane` supplies a pane for each saved one; the caller owns pane construction
+   * because it knows the defaults a new pane needs.
+   */
+  restoreSession: (
+    freshPane: (saved: SavedPane) => Pane,
+  ) => Promise<boolean>;
   removePane: (paneId: string) => void;
   setActivePane: (paneId: string) => void;
   addTab: () => string;
@@ -404,6 +447,86 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   setHandoff: (pendingHandoff) => set({ pendingHandoff }),
 
   // ------------------------------------------------------------------ panes
+
+  saveSession: async (serialisePane) => {
+    const state = get();
+    if (!state.appearance.restoreSession) {
+      // Switched off: forget what was already saved rather than leaving a stale layout
+      // and old terminal output on disk indefinitely.
+      await Promise.all([
+        api.workspaceSave(SESSION_ID, "Last session", "").catch(() => {}),
+        api.scrollbackRetain([]).catch(() => {}),
+      ]);
+      return;
+    }
+
+    const snapshot = buildSnapshot(state, new Date().toISOString());
+    try {
+      await api.workspaceSave(SESSION_ID, "Last session", JSON.stringify(snapshot));
+    } catch {
+      // A failed save costs the next restore, not this session. Not worth a notice.
+      return;
+    }
+
+    // Each pane's visible history, keyed by the id the snapshot recorded.
+    await Promise.all(
+      snapshot.panes.map(async (saved) => {
+        const body = serialisePane(saved.id);
+        if (!body) return;
+        await api
+          .scrollbackSave(saved.id, saved.program ?? null, saved.cwd || null, body)
+          .catch(() => {});
+      }),
+    );
+    // Panes that are gone should not keep their output. Done after the save so a pane
+    // still in the snapshot is never caught by it.
+    await api.scrollbackRetain(snapshot.panes.map((p) => p.id)).catch(() => {});
+  },
+
+  restoreSession: async (freshPane) => {
+    if (!get().appearance.restoreSession) return false;
+    if (get().tabs.length > 0) return false;
+
+    let snapshot;
+    try {
+      snapshot = parseSnapshot(await api.workspaceLoad(SESSION_ID));
+    } catch {
+      return false;
+    }
+    if (!snapshot) return false;
+
+    const created: Pane[] = [];
+    const plan = planRestore(snapshot, (saved) => {
+      const pane = freshPane(saved);
+      created.push(pane);
+      return pane.id;
+    });
+    // Nothing usable in the file, so the caller opens a fresh pane instead.
+    if (plan.tabs.length === 0) return false;
+
+    // `restoreKey` is what lets each pane find the output saved against the pane it
+    // replaces; the ids themselves cannot be reused, since they name dead processes.
+    const byNewId = new Map(plan.panes.map((p) => [p.newId, p]));
+    const panes: Record<string, Pane> = {};
+    for (const pane of created) {
+      const planned = byNewId.get(pane.id);
+      if (!planned) continue;
+      panes[pane.id] = { ...pane, restoreKey: planned.restoreKey };
+    }
+
+    const tabs: Tab[] = plan.tabs.map((tab) => ({
+      id: nextTabId(),
+      title: tab.title,
+      root: tab.root,
+      activePaneId: tab.activePaneId,
+      zoomedPaneId: null,
+    }));
+
+    const active = tabs[plan.activeTabIndex] ?? tabs[0];
+    if (!active) return false;
+    set({ tabs, panes, activeTabId: active.id });
+    return true;
+  },
 
   ensureFirstPane: (pane) =>
     set((s) => {
