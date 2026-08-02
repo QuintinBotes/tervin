@@ -23,6 +23,8 @@ import { BlocksPanel } from "./BlocksPanel";
 import { ThreadPanel } from "./ThreadPanel";
 import { GitPanel } from "./GitPanel";
 import { ConnectionsPanel } from "./ConnectionsPanel";
+import { SavedCommands } from "./SavedCommands";
+import { CommandHistory } from "./CommandHistory";
 
 /** A Block, with every field overridable so a test can make one awkward. */
 function block(over: Partial<api.BlockSummary> = {}): api.BlockSummary {
@@ -534,90 +536,131 @@ describe("ConnectionsPanel reachability", () => {
   });
 });
 
-describe("ConnectionsPanel reachability", () => {
-  function withHost(over: Record<string, unknown> = {}) {
-    useWorkspace.setState({
-      connections: {
-        shells: [],
-        ssh_hosts: [
-          {
-            alias: "build-box",
-            hostname: "10.0.0.4",
-            user: "dev",
-            port: 22,
-            identity_file: null,
-            proxy_jump: null,
-            proxy_command: null,
-            forward_agent: null,
-            request_tty: null,
-            source_file: "~/.ssh/config",
-            is_pattern: false,
-            ...over,
-          },
-        ],
-        ssh_warnings: [],
-        multiplexers: [],
-        serial: [],
-        wsl: [],
-      },
-    });
+describe("SavedCommands", () => {
+  function view(over: Partial<api.SavedCommandView> = {}): api.SavedCommandView {
+    return {
+      id: "sc_1",
+      name: "deploy",
+      template: "deploy {{env:staging}} --service {{service}}",
+      description: "Ship a service",
+      uses: 3,
+      parameters: [
+        { name: "env", default: "staging" },
+        { name: "service", default: null },
+      ],
+      ...over,
+    };
   }
 
-  it("does not probe anything until asked", async () => {
-    // A config can name a hundred machines. Probing on open would be a port scan of the
-    // user's own infrastructure.
-    const probe = vi.spyOn(api, "sshProbe").mockResolvedValue({ state: "timeout" });
-    withHost();
-    render(<ConnectionsPanel />);
-    await new Promise((r) => setTimeout(r, 30));
-    expect(probe).not.toHaveBeenCalled();
+  it("explains what a saved command is when there are none", async () => {
+    vi.spyOn(api, "savedCommands").mockResolvedValue([]);
+    const { container } = render(<SavedCommands />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container.textContent).toContain("Nothing saved yet");
+    expect(container.textContent).toContain("{{env:staging}}");
   });
 
-  it("labels a connect time as a connect time, never as latency", async () => {
-    // SSH reports no round-trip time, so a number called "latency" would be a measurement
-    // of something else wearing the wrong name.
-    vi.spyOn(api, "sshProbe").mockResolvedValue({ state: "open", connect_ms: 42 });
-    withHost();
-    const { container } = render(<ConnectionsPanel />);
-
-    const check = [...container.querySelectorAll("button")].find(
-      (b) => b.textContent === "check",
-    )!;
-    check.click();
-    await new Promise((r) => setTimeout(r, 30));
-
-    expect(container.textContent).toContain("42 ms to connect");
-    expect(container.textContent?.toLowerCase()).not.toContain("latency");
-    expect(container.textContent?.toLowerCase()).not.toContain("ping");
+  it("says how many parts a command needs filled", async () => {
+    vi.spyOn(api, "savedCommands").mockResolvedValue([view()]);
+    const { container } = render(<SavedCommands />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container.textContent).toContain("2 to fill");
   });
 
-  it("shows an already-open connection without a number", async () => {
-    // Known rather than inferred, so a millisecond figure would imply a measurement that
-    // never happened.
-    vi.spyOn(api, "sshProbe").mockResolvedValue({ state: "multiplexed" });
-    withHost();
-    const { container } = render(<ConnectionsPanel />);
-    [...container.querySelectorAll("button")].find((b) => b.textContent === "check")!.click();
-    await new Promise((r) => setTimeout(r, 30));
-
-    expect(container.textContent).toContain("connected");
-    expect(container.textContent).not.toContain("ms");
+  it("states that Enter does not run the command", async () => {
+    // A saved command is often the destructive kind, so which it does has to be explicit.
+    vi.spyOn(api, "savedCommands").mockResolvedValue([view()]);
+    const { container } = render(<SavedCommands />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container.textContent).toContain("does not run it");
   });
 
-  it("says a jumped host is not checkable rather than calling it unreachable", async () => {
-    // The case a naive probe gets confidently wrong: the address may only be routable from
-    // the jump host.
-    vi.spyOn(api, "sshProbe").mockResolvedValue({
-      state: "skipped",
-      reason: "reached through bastion, so it cannot be probed directly",
+  it("shows the filled-in line and warns about anything left blank", async () => {
+    vi.spyOn(api, "savedCommands").mockResolvedValue([view()]);
+    const { container } = render(<SavedCommands />);
+    await new Promise((r) => setTimeout(r, 20));
+
+    const row = container.querySelector('[role="button"]') as HTMLElement;
+    row.click();
+    await new Promise((r) => setTimeout(r, 20));
+
+    // The default is prefilled; `service` is not, so its hole stays visible rather than
+    // being emptied. An argument silently missing changes what a command does.
+    expect(container.textContent).toContain("deploy staging --service {{service}}");
+    expect(container.textContent).toContain("not filled in");
+  });
+});
+
+describe("CommandHistory", () => {
+  function hit(over: Partial<api.CommandSuggestion> = {}): api.CommandSuggestion {
+    return {
+      command: "cargo test --workspace",
+      uses: 12,
+      age_hours: 3,
+      failed_last_time: false,
+      ...over,
+    };
+  }
+
+  it("says when a command failed the last time it ran", async () => {
+    // The one thing a shell's Ctrl-R cannot tell you, and the thing most worth knowing
+    // before pressing Enter on something from a week ago.
+    vi.spyOn(api, "commandHistory").mockResolvedValue([
+      hit({ command: "cargo test", failed_last_time: true }),
+    ]);
+    const { container } = render(<CommandHistory />);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(container.textContent).toContain("failed last time");
+  });
+
+  it("says nothing about a command that succeeded", async () => {
+    vi.spyOn(api, "commandHistory").mockResolvedValue([hit()]);
+    const { container } = render(<CommandHistory />);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(container.textContent).toContain("cargo test --workspace");
+    expect(container.textContent).not.toContain("failed last time");
+  });
+
+  it("states that Enter does not run the command", async () => {
+    // Reusing a command from history is exactly when you want to glance at it: it may name
+    // a branch that no longer exists.
+    vi.spyOn(api, "commandHistory").mockResolvedValue([hit()]);
+    const { container } = render(<CommandHistory />);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(container.textContent).toContain("does not run it");
+  });
+
+  it("explains that history fills up by use rather than showing a blank panel", async () => {
+    vi.spyOn(api, "commandHistory").mockResolvedValue([]);
+    const { container } = render(<CommandHistory />);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(container.textContent).toContain("as you run them");
+  });
+
+  it("searches every project by default, since that is the point", async () => {
+    // A shell's history is one machine and one session's ancestry. The reason this beats it
+    // is "that command from the other repo", so the default must not be scoped.
+    const spy = vi.spyOn(api, "commandHistory").mockResolvedValue([hit()]);
+    useWorkspace.setState({
+      environment: {
+        shell: "/bin/zsh",
+        integration: [],
+        aliases: {
+          aliases: {},
+          functions: [],
+          global_aliases: {},
+          shell: "/bin/zsh",
+          notes: [],
+          enumerated: true,
+        },
+        project_root: "/Users/dev/Projects/tervin",
+        home: "/Users/dev",
+        notices: [],
+      },
     });
-    withHost({ proxy_jump: "bastion" });
-    const { container } = render(<ConnectionsPanel />);
-    [...container.querySelectorAll("button")].find((b) => b.textContent === "check")!.click();
-    await new Promise((r) => setTimeout(r, 30));
-
-    expect(container.textContent).toContain("not checkable");
-    expect(container.textContent?.toLowerCase()).not.toContain("unreachable");
+    render(<CommandHistory />);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(spy).toHaveBeenCalledWith("", null, 60);
   });
 });
 

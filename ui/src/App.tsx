@@ -54,6 +54,7 @@ import { HistorySurface } from "./components/HistorySurface";
 import { FileExplorer } from "./components/FileExplorer";
 import { ConnectionsPanel } from "./components/ConnectionsPanel";
 import { SavedCommands } from "./components/SavedCommands";
+import { CommandHistory } from "./components/CommandHistory";
 import { DirectoryJump } from "./components/DirectoryJump";
 import { GitPanel } from "./components/GitPanel";
 
@@ -268,6 +269,7 @@ export default function App() {
       {s.settingsOpen && <SettingsPanel />}
       {s.connectionsOpen && <ConnectionsOverlay />}
       {s.savedCommandsOpen && <SavedCommands />}
+      {s.commandHistoryOpen && <CommandHistory />}
       {s.directoryJumpOpen && <DirectoryJump />}
       {s.pendingApprovals.length > 0 && <ApprovalSheet />}
     </div>
@@ -1184,6 +1186,9 @@ function runAction(action: string, pane: string | null): boolean {
       return true;
     // With surfaces there is no inspector to toggle; these switch surface, which
     // is the same intent expressed in a two-column layout.
+    case "commands.history":
+      s.setCommandHistory(true);
+      return true;
     case "commands.saved":
       s.setSavedCommands(true);
       return true;

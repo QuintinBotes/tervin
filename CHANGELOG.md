@@ -24,6 +24,28 @@ Everything below is unreleased.
   than immediately: `term.write` is buffered, so at the moment the event arrives the bytes
   that moved the cursor may not have been applied, and the marker would land a line or two
   off.
+### Search every command you have ever run
+
+- **⌘R searches your whole command history**, across every pane and project, and says
+  whether each command **failed the last time you ran it**. That last part is what a shell's
+  own `Ctrl-R` cannot do: it searches one shell's history, on one machine, with no idea
+  whether the command worked.
+- Ranked by fuzzy match combined with frecency, so twenty runs of one command make it easy
+  to find rather than filling the list with twenty rows.
+- Scoped to every project by default. "That command from the other repo" is the reason this
+  beats a shell's history, so narrowing it by default would remove the point. There is a
+  toggle for the current project.
+- Like the other pickers, it fills the command in and leaves the newline to you. Reusing a
+  command from last week is exactly when you want to glance at it, because it may name a
+  branch that no longer exists.
+- The status reported is the **most recent** run, not the best one. What someone wants to
+  know before rerunning something is whether it worked last time.
+
+### Fixed: two defects in the test suite from an earlier conflict resolution
+
+The `ConnectionsPanel reachability` suite had been duplicated, and the `SavedCommands`
+suite lost, when I resolved a conflict by taking one side of a file wholesale. Both are
+restored, and the duplicate is gone.
 
 ### SSH keys: knowing before it asks
 

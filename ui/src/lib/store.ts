@@ -216,6 +216,7 @@ export function overlayOpen(state: WorkspaceState): boolean {
     state.settingsOpen ||
     state.connectionsOpen ||
     state.savedCommandsOpen ||
+    state.commandHistoryOpen ||
     state.directoryJumpOpen ||
     state.pendingApprovals.length > 0
   );
@@ -233,6 +234,8 @@ interface WorkspaceState {
   connectionsOpen: boolean;
   /** The saved-commands overlay. */
   savedCommandsOpen: boolean;
+  /** The command-history overlay. */
+  commandHistoryOpen: boolean;
   /** The directory jump overlay. */
   directoryJumpOpen: boolean;
 
@@ -308,6 +311,7 @@ interface WorkspaceActions {
   setSettings: (open: boolean) => void;
   setConnections: (open: boolean) => void;
   setSavedCommands: (open: boolean) => void;
+  setCommandHistory: (open: boolean) => void;
   setDirectoryJump: (open: boolean) => void;
 
   addPane: (pane: Pane, tabId?: string) => void;
@@ -438,6 +442,7 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   settingsOpen: false,
   connectionsOpen: false,
   savedCommandsOpen: false,
+  commandHistoryOpen: false,
   directoryJumpOpen: false,
 
   tabs: [],
@@ -479,6 +484,7 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   setSettings: (settingsOpen) => set({ settingsOpen }),
   setConnections: (connectionsOpen) => set({ connectionsOpen }),
   setSavedCommands: (savedCommandsOpen) => set({ savedCommandsOpen }),
+  setCommandHistory: (commandHistoryOpen) => set({ commandHistoryOpen }),
   setDirectoryJump: (directoryJumpOpen) => set({ directoryJumpOpen }),
   setHandoff: (pendingHandoff) => set({ pendingHandoff }),
 
