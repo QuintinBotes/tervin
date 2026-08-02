@@ -92,7 +92,10 @@ export function PlanSurface({ narrow }: { narrow: boolean }) {
   if (!proposed) {
     return (
       <div className="empty">
-        <strong>{thread.title}</strong> has not proposed a plan.
+        {/* Not "<title> has not proposed a plan": a title is derived from the first
+            prompt, so it is arbitrary user text and reads as gibberish mid-sentence.
+            The Thread is already named in the header above this panel. */}
+        This Thread has not proposed a plan.
         {thread.capabilities?.plan_mode.level === "supported" ? (
           <>
             {" "}

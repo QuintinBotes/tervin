@@ -237,8 +237,19 @@ impl Drop for HookGate {
 ///
 /// Separate from [`PermissionArbiter`] so the gate can be tested without a rules
 /// engine, and so a caller can record the decision in a Thread's timeline.
+/// `decide` is async because the only handler that ships consults
+/// [`PermissionArbiter`], which is async. It used to be sync, and `ArbiterHandler`
+/// bridged the gap with `Handle::block_on`. That is called from `serve_one`, which
+/// runs inside `tokio::spawn`, and `block_on` panics when called from within an
+/// async context: the task died, the socket closed with no reply, and the hook
+/// client waited its full timeout before failing open. Every single tool call.
+///
+/// The suite did not catch it because the only handler with a test was the trivial
+/// one, which never called `block_on`. Awaiting properly removes the bridge rather
+/// than moving it to another thread.
+#[async_trait::async_trait]
 pub trait HookHandler: Send + Sync {
-    fn decide(&self, request: &HookRequest) -> HookDecision;
+    async fn decide(&self, request: &HookRequest) -> HookDecision;
 }
 
 /// Notified of every decision, so a caller can record it.
@@ -248,7 +259,6 @@ pub type DecisionObserver = Box<dyn Fn(&HookRequest, &HookDecision) + Send + Syn
 pub struct ArbiterHandler {
     arbiter: Arc<dyn PermissionArbiter>,
     thread_id: ThreadId,
-    runtime: tokio::runtime::Handle,
     /// Where decisions go to become timeline events.
     ///
     /// A refusal that only appears in a status line is not an audit trail: the
@@ -261,7 +271,6 @@ impl ArbiterHandler {
         Self {
             arbiter,
             thread_id,
-            runtime: tokio::runtime::Handle::current(),
             observer: None,
         }
     }
@@ -273,19 +282,18 @@ impl ArbiterHandler {
     }
 }
 
+#[async_trait::async_trait]
 impl HookHandler for ArbiterHandler {
-    fn decide(&self, request: &HookRequest) -> HookDecision {
-        let arbiter = self.arbiter.clone();
-        let thread_id = self.thread_id.clone();
-        let tool = request.tool_name.clone();
-        let input = request.tool_input.clone();
-        let cwd = request.cwd.clone();
-
-        // The arbiter is async and this is called from a blocking context, so the
-        // work is handed back to the runtime rather than blocking on a new one.
+    async fn decide(&self, request: &HookRequest) -> HookDecision {
         let decision = self
-            .runtime
-            .block_on(async move { arbiter.decide(&thread_id, &tool, &input, &cwd).await });
+            .arbiter
+            .decide(
+                &self.thread_id,
+                &request.tool_name,
+                &request.tool_input,
+                &request.cwd,
+            )
+            .await;
 
         let decision = match decision {
             ArbiterDecision::Deny { reason } => HookDecision::Deny {
@@ -404,7 +412,7 @@ async fn serve_one(
         }
     };
 
-    let decision = handler.decide(&request);
+    let decision = handler.decide(&request).await;
     let denied = decision.is_deny();
     let _ = respond(&mut stream, &decision).await;
 
@@ -553,8 +561,9 @@ mod tests {
 
     /// A handler that denies anything containing a marker.
     struct Marker;
+    #[async_trait::async_trait]
     impl HookHandler for Marker {
-        fn decide(&self, request: &HookRequest) -> HookDecision {
+        async fn decide(&self, request: &HookRequest) -> HookDecision {
             if request.tool_input.to_string().contains("DENY-ME") {
                 HookDecision::Deny {
                     reason: "Denied by Tervin Rules: test policy".into(),
@@ -913,10 +922,138 @@ mod tests {
         );
     }
 
+    /// An arbiter that answers across an await point.
+    ///
+    /// The await matters. `ArbiterHandler` used to bridge async to sync with
+    /// `Handle::block_on`, and an arbiter that returned immediately could mask that.
+    /// Yielding guarantees the handler is genuinely driven as a future.
+    struct AsyncArbiter {
+        deny_tool: String,
+    }
+
+    #[async_trait::async_trait]
+    impl PermissionArbiter for AsyncArbiter {
+        async fn decide(
+            &self,
+            _thread_id: &ThreadId,
+            tool_name: &str,
+            _input: &Value,
+            _cwd: &str,
+        ) -> ArbiterDecision {
+            tokio::task::yield_now().await;
+            if tool_name == self.deny_tool {
+                ArbiterDecision::Deny {
+                    reason: "the rules say no".into(),
+                }
+            } else {
+                ArbiterDecision::Allow
+            }
+        }
+    }
+
+    fn arbiter_gate_handler(thread_id: &ThreadId) -> Arc<ArbiterHandler> {
+        Arc::new(ArbiterHandler::new(
+            Arc::new(AsyncArbiter {
+                deny_tool: "Bash".into(),
+            }),
+            thread_id.clone(),
+        ))
+    }
+
+    /// The handler that actually ships, driven through the real client and socket.
+    ///
+    /// This test did not exist, and its absence cost a release. `ArbiterHandler` is
+    /// the only handler Tervin ever constructs, and it was the only one with no
+    /// coverage: every other gate test used a trivial handler that returned a
+    /// decision directly. So `Handle::block_on` inside `decide`, called from a task
+    /// on a runtime worker, panicked in the real app and never in a test. The socket
+    /// closed with no reply, the hook client waited out its full timeout, and the
+    /// gate failed open on *every* tool call while the suite stayed green.
+    ///
+    /// Exit code 1 is the specific symptom: that is the client reporting it got no
+    /// answer. Asserting on 2 and 0 rather than merely "not a deny" is what makes
+    /// this catch a timeout rather than a wrong decision.
+    #[tokio::test]
+    async fn the_arbiter_backed_handler_answers_over_the_real_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let thread_id = ThreadId::new();
+        let gate = start_gate(
+            dir.path(),
+            &thread_id,
+            Path::new("/Apps/Tervin"),
+            arbiter_gate_handler(&thread_id),
+        )
+        .await
+        .expect("the gate should start");
+        let socket = gate.socket_path().to_path_buf();
+
+        let deny = r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf /"},"cwd":"/tmp"}"#;
+        let (code, err) = run_client_capturing(&socket, deny).await;
+        assert_ne!(
+            code, 1,
+            "exit 1 means the client never got an answer: {err}"
+        );
+        assert_eq!(
+            code, 2,
+            "a refusal must exit 2 or the tool still runs: {err}"
+        );
+
+        let allow = r#"{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"/p/a.rs"},"cwd":"/tmp"}"#;
+        let (code, err) = run_client_capturing(&socket, allow).await;
+        assert_ne!(code, 1, "exit 1 means no answer: {err}");
+        assert_eq!(code, 0, "a permitted action defers, which exits 0: {err}");
+
+        // The denial is recorded, because a refusal that is not inspectable
+        // afterwards is not an audit trail.
+        assert_eq!(gate.denials().len(), 1, "the deny should be recorded once");
+    }
+
+    /// Several calls at once, because an agent does not wait its turn.
+    ///
+    /// `serve_one` spawns a task per connection specifically so a slow decision does
+    /// not delay the next, and nothing asserted that. It also fails if the handler
+    /// blocks a runtime worker, since enough concurrent blocks starve the pool.
+    #[tokio::test]
+    async fn concurrent_hook_calls_are_all_answered() {
+        let dir = tempfile::tempdir().unwrap();
+        let thread_id = ThreadId::new();
+        let gate = start_gate(
+            dir.path(),
+            &thread_id,
+            Path::new("/Apps/Tervin"),
+            arbiter_gate_handler(&thread_id),
+        )
+        .await
+        .unwrap();
+        let socket = gate.socket_path().to_path_buf();
+
+        let mut tasks = Vec::new();
+        for i in 0..6 {
+            let socket = socket.clone();
+            let tool = if i % 2 == 0 { "Bash" } else { "Read" };
+            let payload = format!(
+                r#"{{"hook_event_name":"PreToolUse","tool_name":"{tool}","tool_input":{{"n":{i}}},"cwd":"/tmp"}}"#
+            );
+            tasks.push(tokio::spawn(async move {
+                run_client_capturing(&socket, &payload).await
+            }));
+        }
+
+        let mut codes = Vec::new();
+        for task in tasks {
+            let (code, err) = task.await.unwrap();
+            assert_ne!(code, 1, "a concurrent call went unanswered: {err}");
+            codes.push(code);
+        }
+        codes.sort_unstable();
+        assert_eq!(codes, vec![0, 0, 0, 2, 2, 2]);
+    }
+
     /// Refuses any shell command, so the live test has something unambiguous to see.
     struct DenyBash;
+    #[async_trait::async_trait]
     impl HookHandler for DenyBash {
-        fn decide(&self, request: &HookRequest) -> HookDecision {
+        async fn decide(&self, request: &HookRequest) -> HookDecision {
             if request.tool_name == "Bash" {
                 HookDecision::Deny {
                     reason: "Denied by Tervin Rules: shell commands are refused in this test."
