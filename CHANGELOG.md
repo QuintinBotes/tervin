@@ -6,6 +6,25 @@ log says what changed, and this is for what it means to someone using it.
 ## Unreleased
 
 Everything below is unreleased.
+### A sticky header says which command you are reading
+
+- Three screens into a build log, the command that produced it has scrolled away and
+  nothing on screen says what you are looking at. A small header now pins that command to
+  the top of the pane while its own line is out of sight.
+- **It appears only once the command's line has scrolled above the viewport.** While the
+  line is still visible the header would duplicate what you can already read, which is how
+  a sticky header turns from useful into clutter.
+- **Nothing over a full-screen program.** vim and htop draw their own interface, and what is
+  on screen then is not a Block's output.
+- It is pinned over the output rather than pushing it down. Taking a row away mid-session
+  would reflow everything and misalign a full-screen program, and the shell was already
+  told how many rows it has.
+- Positions come from xterm's own markers, which move with reflow and dispose themselves
+  when their line leaves scrollback. A marker is registered inside a write callback rather
+  than immediately: `term.write` is buffered, so at the moment the event arrives the bytes
+  that moved the cursor may not have been applied, and the marker would land a line or two
+  off.
+
 ### SSH keys: knowing before it asks
 
 - Connections now say **"key not loaded"** for a host whose key is not in the SSH agent, so
