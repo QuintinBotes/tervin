@@ -634,6 +634,22 @@ function HandoffButton({ threadId }: { threadId: string }) {
  * Tervin's own gate is excluded: it reports itself in the timeline, and listing it
  * here would present Tervin's work as the user's configuration.
  */
+/** Collapse identical hook failures, keeping first-seen order. */
+function groupFailures(runs: api.HookRun[]): { run: api.HookRun; count: number }[] {
+  const out: { run: api.HookRun; count: number }[] = [];
+  for (const run of runs) {
+    const existing = out.find(
+      (g) =>
+        g.run.name === run.name &&
+        g.run.exit_code === run.exit_code &&
+        g.run.message === run.message,
+    );
+    if (existing) existing.count += 1;
+    else out.push({ run, count: 1 });
+  }
+  return out;
+}
+
 function HookRuns({ runs }: { runs: api.HookRun[] }) {
   const theirs = runs.filter((r) => !r.is_tervin);
   if (theirs.length === 0) return null;
@@ -644,13 +660,27 @@ function HookRuns({ runs }: { runs: api.HookRun[] }) {
 
   return (
     <div className="meta col" style={{ gap: 2, marginTop: "var(--sp-1)" }}>
-      {failed.map((run, i) => (
-        <div key={`${run.name}-${i}`} className="row" style={{ gap: "var(--sp-2)" }}>
+      {/* Grouped, not listed. One broken hook fires per tool call, so an hour of
+          work produced 59 byte-identical lines and a panel nobody could read. The
+          same reasoning the working hooks already got: the count is the
+          information, the repetition is not. Grouped by name, exit code and
+          message so two genuinely different failures never merge. */}
+      {groupFailures(failed).map(({ run, count }) => (
+        <div
+          key={`${run.name}-${run.exit_code}-${run.message ?? ""}`}
+          className="row"
+          style={{ gap: "var(--sp-2)" }}
+        >
           <span className="dot dot-amber" />
           <span className="mono">{run.name}</span>
           <span className="tone-amber truncate grow" title={run.message ?? undefined}>
-            failed (exit {run.exit_code}){run.message ? ` — ${run.message}` : ""}
+            failed (exit {run.exit_code}){run.message ? `: ${run.message}` : ""}
           </span>
+          {count > 1 && (
+            <span className="chip tabular" style={{ flex: "none" }} title={`${count} times`}>
+              ×{count}
+            </span>
+          )}
         </div>
       ))}
       {(fine > 0 || blocked.length > 0) && (
