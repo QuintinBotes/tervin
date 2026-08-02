@@ -57,7 +57,7 @@ specific matters more than being reassuring.
 | --- | --- | --- |
 | **Cloud agents (Oz)** | Event-triggered autonomous agents in containers, reacting to webhooks, CI, cron and Slack. 20 to 40 concurrent depending on tier. | **Close it, differently.** See §4. |
 | **Warp Drive** | Team-synced storage of workflows, notebooks, environment profiles and MCP server lists. | **Close the local half, refuse the cloud half.** See §4.4. |
-| **Cross-platform** | GA on macOS, Linux (X11 and Wayland) and Windows, including ARM64. | **Linux: close it.** §3.1. **Windows: deliberately not.** §5. |
+| **Cross-platform** | GA on macOS, Linux (X11 and Wayland) and Windows, including ARM64. | **Linux: close it.** §3.1. **Windows: deferred.** §6. |
 | **CLI flag completion** | Subcommand and flag completion for hundreds of CLIs, no plugin needed. | **Close it.** §3.2. |
 | **Blocks over SSH** | Shell integration, blocks and AI survive an SSH hop and subshells (`nvm`, venv, `docker exec`, `kubectl exec`). | **Close it.** §3.3. |
 | **Notebook blocks** | A command, its output and prose, shared as a link with execution context. | Partly. §4.4. |
@@ -536,12 +536,6 @@ Naming these matters as much as the roadmap, because each is a plausible request
   about covers the realistic threat, a substituted download. It does not cover a verified
   third-party identity, which is a real thing to be missing and is said plainly in
   `SECURITY.md` rather than glossed.
-- **Windows.** ConPTY covers the PTY layer, but shell integration has no equivalent to
-  `ZDOTDIR`, and the approach for automatic injection (§3.1) does not carry over. Tervin's
-  design assumes a Unix shell throughout: every agent runtime, every shell-integration hook,
-  and the completion design (§3.2) all depend on it. Solving that cleanly requires a design
-  that does not exist yet, and macOS plus Linux is a coherent scope. Windows is not in the
-  roadmap.
 - **Instant replay**, probably. Blocks answer the question people actually ask.
 
 ---
@@ -564,6 +558,14 @@ a cloud agent's PR being the part nobody else has (§4.3). Local models as real 
 
 **Later, or never.** Floating panes, layout artefacts, history sync, the MCP server, instant
 replay. Each is defensible; none changes the argument for using Tervin.
+
+**Windows: deferred, not refused.** ConPTY covers the PTY layer behind `portable-pty`, so the
+terminal itself is tractable. Shell integration is the blocker: there is no equivalent to
+`ZDOTDIR`, so the automatic injection in §3.1 does not carry over, and the completion design
+in §3.2 assumes a Unix shell. Tervin's scope is macOS and Linux, which is coherent because
+both share those assumptions. This is in the roadmap rather than in §5 deliberately: nothing
+about the design forecloses Windows, and the cost is a shell-integration story nobody has
+written yet rather than a decision against it.
 
 ---
 

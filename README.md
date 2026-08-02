@@ -306,7 +306,9 @@ What is deliberately incomplete, and tracked rather than hidden:
   here would be a measurement of something else wearing a latency label.
 - **Linux.** Not yet claimed. CI now runs the suite there; the platform claim changes only after
   a person has actually used it for a day.
-- **Windows.** Not a target platform.
+- **Windows.** Not a target for now. Deferred rather than refused: the blocker is shell
+  integration, which has no `ZDOTDIR` equivalent, not the terminal itself. Reasoning in
+  [COMPETITIVE-SPEC.md](docs/COMPETITIVE-SPEC.md) §6.
 
 The commit history is the honest record: several commits exist because a test caught the
 implementation, and a few because a test was itself wrong. Both are labelled as such.
