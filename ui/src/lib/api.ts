@@ -900,6 +900,24 @@ export interface WslDistribution {
   is_default: boolean;
 }
 
+/**
+ * What Tervin learned about reaching an SSH host.
+ *
+ * `open.connect_ms` is the time to establish TCP — **not** SSH round-trip time. SSH
+ * exposes no round-trip time, so a number labelled "latency" would be a measurement of
+ * something else. The UI repeats the distinction rather than smoothing it over.
+ */
+export type Reachability =
+  | { state: "multiplexed" }
+  | { state: "open"; connect_ms: number }
+  | { state: "refused" }
+  | { state: "timeout" }
+  | { state: "unresolved" }
+  | { state: "skipped"; reason: string };
+
+/** Probe one host, on demand. Never called for a whole config at once. */
+export const sshProbe = (alias: string) => invoke<Reachability>("ssh_probe", { alias });
+
 export interface Connections {
   shells: ShellProfile[];
   ssh_hosts: SshHostInfo[];
