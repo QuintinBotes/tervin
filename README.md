@@ -243,6 +243,9 @@ TERVIN_LIVE_CLAUDE=1 cargo test -p agent-runtime -- the_real_cli_honours_a_refus
 - **[PERFORMANCE.md](docs/PERFORMANCE.md)**: measured throughput for the three hot
   paths, and the one limit that is still real.
 - **[SECURITY.md](SECURITY.md)**: the threat model, and how to report something.
+- **[COMPETITIVE-SPEC.md](docs/COMPETITIVE-SPEC.md)**: an in-depth review of every terminal
+  people actually use, what Tervin lacks against each, and the specification for what comes
+  next. Includes what Tervin should refuse to build.
 
 ## Status
 
