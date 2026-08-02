@@ -20,6 +20,7 @@
 
 pub mod acp;
 pub mod claude;
+pub mod codex;
 pub mod handoff;
 pub mod local;
 pub mod mcp;
@@ -29,6 +30,7 @@ pub mod runtime;
 
 pub use acp::{known_acp_agents, AcpAgentSpec, AcpRuntime};
 pub use claude::ClaudeCodeRuntime;
+pub use codex::{CodexNormalizer, CodexRuntime};
 pub use handoff::{CommandRecord, ContextBundle};
 pub use local::{known_local_endpoints, LocalEndpoint, LocalModelRuntime};
 pub use mcp::{McpConfig, McpServer};
