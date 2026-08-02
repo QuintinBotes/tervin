@@ -1,26 +1,30 @@
-# Homebrew cask for Tervin.
+# Homebrew cask for Tervin — the template the release workflow fills in.
 #
-# Lives in this repository rather than only in a tap so the packaging is reviewable
-# alongside the code it packages, and so `brew audit` can be run before a release
-# rather than after a user finds the problem.
+# This repository is its own tap. Homebrew reads casks from `Casks/`, and
+# `brew tap <name> <url>` accepts any URL — the `homebrew-` repository prefix is only
+# what the one-argument shortcut assumes. So there is no second repository to keep in
+# step with this one.
 #
-# To publish: copy into a tap as `Casks/tervin.rb`, replacing the placeholders below
-# with the values printed by `packaging/release.sh`.
+# `.github/workflows/release.yml` substitutes the placeholders below and commits the
+# result to `Casks/tervin.rb`. **Edit this file, not that one.**
 cask "tervin" do
   version "0.1.0"
 
-  # Per-architecture checksums. A single `:no_check` would mean Homebrew installs
-  # whatever the URL currently serves, which defeats the point of a checksum.
-  on_arm do
-    sha256 "REPLACE_WITH_ARM64_SHA256"
-    url "https://github.com/QuintinBotes/tervin/releases/download/v#{version}/Tervin_#{version}_aarch64.dmg",
-        verified: "github.com/QuintinBotes/tervin/"
-  end
-  on_intel do
-    sha256 "REPLACE_WITH_X86_64_SHA256"
-    url "https://github.com/QuintinBotes/tervin/releases/download/v#{version}/Tervin_#{version}_x64.dmg",
-        verified: "github.com/QuintinBotes/tervin/"
-  end
+  # One URL and one checksum, because the build produces one universal DMG
+  # (`--target universal-apple-darwin`) rather than a binary per architecture.
+  #
+  # An earlier version of this cask split on `on_arm`/`on_intel` and pointed at
+  # `Tervin_<v>_aarch64.dmg` and `Tervin_<v>_x64.dmg` — filenames that build has never
+  # produced. Every `brew install --cask` would have 404'd on the first release.
+  #
+  # The filename is substituted rather than composed from `version`, because Tauri
+  # decides it and guessing it is what caused that bug.
+  #
+  # `:no_check` is deliberately not used: it would mean Homebrew installs whatever the
+  # URL currently serves, which is the one thing a checksum exists to prevent.
+  sha256 "REPLACE_WITH_DMG_SHA256"
+  url "https://github.com/QuintinBotes/tervin/releases/download/v#{version}/REPLACE_WITH_DMG_NAME",
+      verified: "github.com/QuintinBotes/tervin/"
 
   name "Tervin"
   desc "Agent-native terminal workspace"
@@ -36,7 +40,10 @@ cask "tervin" do
   # The bundle declares 10.13, but Tervin is only tested on Sonoma and later and its
   # PTY tests run against the tools those versions ship. Claiming the lower bound the
   # linker happens to allow would be claiming support that was never exercised.
-  depends_on macos: ">= :sonoma"
+  # The symbol form, not `">= :sonoma"`: Homebrew deprecated string comparison here.
+  # Verified with `brew info` against a real local tap — both report "macOS >= 14", so
+  # the symbol means *at least* that version rather than exactly it.
+  depends_on macos: :sonoma
 
   app "Tervin.app"
 
