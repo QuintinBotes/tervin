@@ -1,5 +1,15 @@
 # Security
 
+> **In development, and that matters here.** Tervin has not been released, so this
+> threat model has never been tested against real use: only against the tests. Two
+> specifics worth stating plainly:
+>
+> - **Release builds are unsigned and unnotarised.** That needs a paid Apple Developer ID.
+>   Verify any download against `SHA256SUMS.txt` rather than trusting the source.
+> - **No third party has reviewed any of this.** The permission model is documented
+>   carefully and its limits are stated, but documented carefully is not the same as
+>   audited.
+
 ## Reporting a vulnerability
 
 Please report privately rather than in the issue tracker: open a
@@ -7,7 +17,7 @@ Please report privately rather than in the issue tracker: open a
 on this repository.
 
 Include what you did, what happened, and what you expected. If it involves an agent,
-say which runtime and whether the permission gate was reported as live — those two
+say which runtime and whether the permission gate was reported as live: those two
 states fail identically from the outside.
 
 Expect an acknowledgement within a few days. Pre-1.0, there is no formal SLA, and
@@ -40,13 +50,13 @@ choice. The session's permission text states it, and the hook writes
 `This tool call was NOT checked against Tervin Rules` to stderr rather than failing
 silently.
 
-**Tervin only ever tightens.** Through a hook it returns `deny` or `defer` — never
+**Tervin only ever tightens.** Through a hook it returns `deny` or `defer`: never
 `allow`, which would skip the runtime's own permission checks. Enabling Tervin's gate
 cannot turn an action the runtime would have asked about into one it performs silently.
 
 **A capability is upgraded by evidence.** `native_permission_bridge` stays `Partial`
 until a gate has actually fired, because Claude Code silently ignores settings files
-that fail validation — an installed-but-broken gate is indistinguishable from none.
+that fail validation: an installed-but-broken gate is indistinguishable from none.
 
 **`bypassPermissions` is not offered.** A one-click way to disable every check cannot
 be reconciled with telling a user their actions are reviewable.
@@ -55,7 +65,7 @@ be reconciled with telling a user their actions are reviewable.
 
 **Nothing leaves your machine that you did not attach.** Prompts and explicit
 `Attachment`s go to the runtime you selected. There is no code path that sends
-scrollback, file contents, or environment variables — the promise is enforced by there
+scrollback, file contents, or environment variables: the promise is enforced by there
 being no other way in. This holds for local endpoints too.
 
 **Everything persists locally.** Blocks, events, and raw runtime payloads live in
@@ -65,8 +75,8 @@ states that it redacted rather than implying the original was clean.
 
 **Secrets are named, never read.** Tervin identifies credential files to *refuse* them.
 Under ACP, `fs/read_text_file` and `fs/write_text_file` are confined to the session's
-project root — enforced after symlink resolution, so a link inside the project cannot
-reach outside it — and files matching credential shapes (`.env*`, `id_rsa`,
+project root, enforced after symlink resolution, so a link inside the project cannot
+reach outside it, and files matching credential shapes (`.env*`, `id_rsa`,
 `id_ed25519`, `*.pem`, `*.key`, `.netrc`, `.npmrc`, `credentials`, `secret*`, and
 others) are refused even inside the root. If such a file is genuinely needed, the user
 attaches it explicitly.
@@ -76,8 +86,8 @@ variable is reported, and only a config directory's path. There is a test for th
 
 ## Protected folders
 
-Tervin's file index **never descends into the folders macOS guards** — `~/Desktop`,
-`~/Documents`, `~/Downloads`, `~/Music`, `~/Pictures`, `~/Movies`, `~/Library` — when
+Tervin's file index **never descends into the folders macOS guards**, `~/Desktop`,
+`~/Documents`, `~/Downloads`, `~/Music`, `~/Pictures`, `~/Movies`, `~/Library`, when
 they are reached incidentally.
 
 This is a trust property, not an optimisation. Reading `~/Music` makes macOS ask for
@@ -100,7 +110,7 @@ your user can reach it, so the payload is bounded and input Tervin cannot parse 
 *refused* rather than allowed.
 
 **Agent-hosted commands.** Under ACP, `terminal/create` runs commands on the agent's
-behalf. These are spawned directly rather than through a shell — the agent supplies a
+behalf. These are spawned directly rather than through a shell: the agent supplies a
 command and arguments, and `sh -c` would reintroduce word splitting and globbing that
 the classifier just reasoned about. Every one goes through Tervin Rules first, and a
 session ending kills anything it started.
@@ -109,12 +119,12 @@ session ending kills anything it started.
 specifically to avoid it.
 
 **Shell integration.** Tervin injects its hook via `ZDOTDIR`, `--init-file`, and
-`vendor_conf.d` — writing only inside its own directory. **It never modifies a file you
+`vendor_conf.d`: writing only inside its own directory. **It never modifies a file you
 own**, which is asserted by test. Set `TERVIN_SHELL_INTEGRATION=0` to disable, or turn
 injection off in Settings.
 
 **Alias enumeration** runs `$SHELL -ic alias`, which sources your rc files. The output
-is treated as untrusted input and only ever parsed, never executed — which is why
+is treated as untrusted input and only ever parsed, never executed, which is why
 discovered profiles are *offered* rather than adopted.
 
 ## Known gaps
@@ -125,6 +135,6 @@ Stated rather than omitted:
 - **Linux is untested.** The code is written for Unix generally, but untested is not
   supported.
 - **A malicious agent is not contained.** Tervin gates what it is asked about. An agent
-  that finds a path Tervin does not mediate — through a command that spawns another
-  process, for instance — is limited by your OS, not by Tervin. Use the OS mechanisms
+  that finds a path Tervin does not mediate, through a command that spawns another
+  process, for instance, is limited by your OS, not by Tervin. Use the OS mechanisms
   you would use for any untrusted program.

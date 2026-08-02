@@ -3,6 +3,10 @@
 Thanks for looking. This document is short on ceremony and specific about the two
 things that are genuinely unusual here: the honesty rule and the testing standard.
 
+> **In development.** Nothing is released yet, so there is no compatibility to preserve,
+> which makes this the best time to change something badly designed. A pull request that
+> replaces a decision is more welcome now than it will ever be again.
+
 ## Getting set up
 
 ```sh
@@ -31,20 +35,20 @@ Concretely:
   becomes `Supported` when something has been observed working, not when it has been
   set up. If you cannot observe it, it stays `Partial` with a note saying why.
 - **`Unsupported` requires a reason, `Partial` requires a note.** The type enforces
-  this. Do not write "not supported" — write what the user should do instead.
+  this. Do not write "not supported": write what the user should do instead.
 - **Never present an observation as a gate.** If Tervin can see an action but not
   stop it, `enforceable` is false and the UI says "observed".
 - **Do not drop what you cannot classify.** Emit `runtime.unclassified` and keep the
   raw payload.
 - **Do not add a code path that sends anything the user did not attach.** No
-  scrollback, no file contents, no environment. This holds for local endpoints too —
+  scrollback, no file contents, no environment. This holds for local endpoints too:
   they feel safe, which is what makes the temptation real.
 
 ## The testing standard
 
 **Test against the real thing, or say plainly that you did not.**
 
-Mocks are allowed for things that are genuinely external and slow — but not for the
+Mocks are allowed for things that are genuinely external and slow, but not for the
 thing under test. If you are writing a terminal feature, drive a PTY. If you are
 writing a protocol adapter, speak the protocol over a real pipe or socket.
 
@@ -80,7 +84,7 @@ variable and skipped by default:
 TERVIN_LIVE_CLAUDE=1 cargo test -p agent-runtime -- the_real_cli_honours_a_refusal
 ```
 
-Tests that need an absent binary return early rather than failing — a contributor
+Tests that need an absent binary return early rather than failing: a contributor
 without `vim` installed should not see a red suite.
 
 ## Code style
@@ -115,7 +119,7 @@ instant reject.
 
 Include the platform, the shell, and whether shell integration was active. For
 anything involving an agent, include the runtime and whether the permission gate was
-reported as live — the two failure modes look identical from the outside and that
+reported as live: the two failure modes look identical from the outside and that
 detail separates them.
 
 Security issues go to [SECURITY.md](SECURITY.md), not the issue tracker.

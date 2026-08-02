@@ -13,6 +13,10 @@ cargo bench -p rules-engine --bench classify
 Numbers from a different machine will differ. The *ratios* and the limits are the
 durable part.
 
+> **In development.** Tervin has not been released and its local data formats are not
+> stable. This document describes the code as it stands, including the parts that are
+> deliberately incomplete. See the [status notice](../README.md#status) in the README.
+
 ## The three paths that matter
 
 Only three places in Tervin are in a loop tight enough for a constant factor to be
@@ -48,7 +52,7 @@ a PTY hands over small, irregular reads, and the state carried between them is e
 where the marker-splitting bug lived. The carry-over is cheap as well as correct.
 
 Marker-dense output is ~3× slower per byte than plain text because each sequence is
-parsed rather than skipped. It is also the rarest shape — a few hundred bytes per
+parsed rather than skipped. It is also the rarest shape: a few hundred bytes per
 prompt.
 
 ## Fuzzy matching
@@ -64,7 +68,7 @@ Ranking a whole corpus, worst case, with no result cap:
 
 ### The prefilter, and what the benchmark found
 
-The first measurement showed `acpnorm` at **11.4 ms** for 20,000 files — inside a frame,
+The first measurement showed `acpnorm` at **11.4 ms** for 20,000 files: inside a frame,
 but `FileIndex::MAX_ENTRIES` is 200,000, which extrapolates to ~114 ms and a visibly
 laggy picker.
 
@@ -75,16 +79,16 @@ subsequence scan now rejects those first, allocating nothing.
 It is safe rather than merely fast: an alignment exists only if the query is a
 subsequence, and a leftmost-first scan finds one whenever one exists. So the prefilter
 can never reject a candidate the DP would have matched. Case comparison also stopped
-allocating — `char::to_lowercase` returns an iterator because one character can
+allocating: `char::to_lowercase` returns an iterator because one character can
 lowercase to several, and paying for that per DP cell dominated the inner loop while
 nearly every path in a repository is ASCII.
 
-The longer and more specific the query, the more it helps — which is the right shape,
+The longer and more specific the query, the more it helps, which is the right shape,
 because a longer query is what a user types when the list is not yet what they want.
 
 ### Reusing the scratch space
 
-The prefilter left a second cost visible: **six allocations per candidate** — the
+The prefilter left a second cost visible, **six allocations per candidate**: the
 character vectors, the positional bonuses, and the three DP tables. For a short query
 that fixed cost dominated the dynamic program it existed to serve, which is why a
 one-character query barely improved.
@@ -108,8 +112,8 @@ was invisible to the other, and neither would have been found without measuring.
 ### The limit that is still real
 
 **A single-character query remains the slowest case**, at 2.87 ms per 20,000 files. The
-prefilter cannot help it — one character matches nearly everything, so the DP runs for
-almost every candidate — and the allocations are already gone.
+prefilter cannot help it, one character matches nearly everything, so the DP runs for
+almost every candidate, and the allocations are already gone.
 
 Extrapolated to the 200,000-entry cap that is ~29 ms: still a perceptible hitch on the
 first keystroke in a very large repository, down from ~53 ms. It is not a hang, it
@@ -117,7 +121,7 @@ affects only the least selective query possible, and it resolves as soon as a se
 character is typed.
 
 Stated here rather than left to be discovered. Going further would mean not scoring the
-whole corpus — capping candidates, or indexing by first character — which trades exact
+whole corpus, capping candidates, or indexing by first character, which trades exact
 ranking for speed. That is a real trade and is not being made silently.
 
 ## Risk classification
@@ -158,7 +162,7 @@ message per line.
 log in memory per Block does not survive a day's work.
 
 **Blocking work stays off the async runtime.** Git and SQLite calls run on a blocking
-pool. The exception is the terminal write path — a lock and a `write` — because routing
+pool. The exception is the terminal write path, a lock and a `write`, because routing
 a keystroke through a task queue adds latency to typing.
 
 **Discovery probes are short and parallel-safe.** Local model endpoints get 1.5 s; the

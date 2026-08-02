@@ -24,7 +24,7 @@ wrong is cheap. Defending it is not.
 ## Not acceptable
 
 Harassment, personal attacks, discriminatory language, and unwelcome attention. Also:
-deliberately wasting people's time — reports you have not checked, pull requests you have
+deliberately wasting people's time: reports you have not checked, pull requests you have
 not run, and arguments you know are not the real objection.
 
 ## Reporting
@@ -34,6 +34,6 @@ Email the maintainer, or open a
 if a public issue would make things worse. Reports are handled privately.
 
 The maintainer decides what to do about a report, and will say what was decided to the
-person who raised it. That is a small project's honest answer — there is no committee,
+person who raised it. That is a small project's honest answer: there is no committee,
 and pretending otherwise would be exactly the kind of overclaiming this codebase exists
 to avoid.
