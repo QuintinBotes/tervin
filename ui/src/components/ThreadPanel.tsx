@@ -36,6 +36,12 @@ export function ThreadPanel() {
   // A session someone started in a pane. Tervin observes it and cannot drive it, so
   // there is nothing for a composer to do.
   const observedInPane = thread?.paneId ?? null;
+  // Kept current by the `pane://cwd` listener, so this follows the pane as it moves.
+  const focusedCwd = useWorkspace((st) => {
+    const tab = st.tabs.find((t) => t.id === st.activeTabId);
+    const paneId = tab?.activePaneId;
+    return paneId ? (st.panes[paneId]?.cwd ?? null) : null;
+  });
   const [vimMode, setVimMode] = useState<VimMode>("insert");
   // Refs rather than state: neither should cause a re-render, and both must be current
   // inside the keydown handler without rebuilding it.
@@ -334,7 +340,10 @@ export function ThreadPanel() {
             >
               <PathComplete
                 query={pathQuery.query}
-                relativeTo={null}
+                // Scoped to the focused pane's directory, so `@src/…` in a split means
+                // that pane's `src` rather than the project root's. Falls back to the
+                // whole index when no pane is focused.
+                relativeTo={focusedCwd}
                 selected={pathSelected}
                 onCount={setPathCount}
                 onAccept={acceptPath}

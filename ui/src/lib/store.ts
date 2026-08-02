@@ -216,6 +216,7 @@ export function overlayOpen(state: WorkspaceState): boolean {
     state.settingsOpen ||
     state.connectionsOpen ||
     state.savedCommandsOpen ||
+    state.directoryJumpOpen ||
     state.pendingApprovals.length > 0
   );
 }
@@ -232,6 +233,8 @@ interface WorkspaceState {
   connectionsOpen: boolean;
   /** The saved-commands overlay. */
   savedCommandsOpen: boolean;
+  /** The directory jump overlay. */
+  directoryJumpOpen: boolean;
 
   // terminal canvas
   tabs: Tab[];
@@ -305,6 +308,7 @@ interface WorkspaceActions {
   setSettings: (open: boolean) => void;
   setConnections: (open: boolean) => void;
   setSavedCommands: (open: boolean) => void;
+  setDirectoryJump: (open: boolean) => void;
 
   addPane: (pane: Pane, tabId?: string) => void;
   /**
@@ -343,6 +347,14 @@ interface WorkspaceActions {
   swapFocusedPane: () => void;
   toggleZoom: () => void;
   markPaneExited: (paneId: string, exitCode: number | null) => void;
+  /**
+   * A pane changed directory.
+   *
+   * The backend has emitted `pane://cwd` since Blocks existed and nothing listened, so a
+   * pane's `cwd` stayed whatever it was at spawn — which made the status rail stale, saved
+   * the wrong directory in a session, and made per-pane completion impossible.
+   */
+  setPaneCwd: (paneId: string, cwd: string) => void;
 
   setAppearance: (patch: Partial<Appearance>) => void;
   loadAppearance: () => Promise<void>;
@@ -426,6 +438,7 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   settingsOpen: false,
   connectionsOpen: false,
   savedCommandsOpen: false,
+  directoryJumpOpen: false,
 
   tabs: [],
   panes: {},
@@ -466,6 +479,7 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   setSettings: (settingsOpen) => set({ settingsOpen }),
   setConnections: (connectionsOpen) => set({ connectionsOpen }),
   setSavedCommands: (savedCommandsOpen) => set({ savedCommandsOpen }),
+  setDirectoryJump: (directoryJumpOpen) => set({ directoryJumpOpen }),
   setHandoff: (pendingHandoff) => set({ pendingHandoff }),
 
   // ------------------------------------------------------------------ panes
@@ -742,6 +756,15 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
       const pane = s.panes[paneId];
       if (!pane) return {};
       return { panes: { ...s.panes, [paneId]: { ...pane, exited: true, exitCode } } };
+    }),
+
+  setPaneCwd: (paneId, cwd) =>
+    set((s) => {
+      const pane = s.panes[paneId];
+      // Unchanged is the common case — a prompt redraw reports the same directory — and
+      // returning a new object each time would rerender every pane.
+      if (!pane || pane.cwd === cwd) return {};
+      return { panes: { ...s.panes, [paneId]: { ...pane, cwd } } };
     }),
 
   // ------------------------------------------------------------- appearance

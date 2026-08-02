@@ -9,7 +9,7 @@
 //! per row would stall on scroll — so the row carries a bounded preview and the
 //! full output is fetched only when something expands.
 
-use crate::model::{Block, BlockOutput, BlockStatus, GitContext, ParsedOutput};
+use crate::model::{Block, BlockOutput, BlockStatus, GitContext, ParsedOutput, RecentDir};
 use crate::query::{BlockFilter, BlockSummary, SortOrder};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
@@ -230,6 +230,17 @@ impl Store {
             -- Names are how people find these, so two with the same name is a mistake
             -- rather than a feature.
             CREATE UNIQUE INDEX IF NOT EXISTS saved_commands_name ON saved_commands(name);
+            -- Directories visited, so `cd` can offer somewhere you have actually been.
+            --
+            -- Both a count and a timestamp, because neither alone ranks well: pure
+            -- recency loses the directory you live in the moment you visit anywhere
+            -- else, and a pure count keeps a place you abandoned months ago at the top.
+            CREATE TABLE IF NOT EXISTS recent_dirs (
+                path      TEXT PRIMARY KEY,
+                visits    INTEGER NOT NULL DEFAULT 1,
+                last_used TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS recent_dirs_used ON recent_dirs(last_used DESC);
 
             CREATE TABLE IF NOT EXISTS kv (
                 key   TEXT PRIMARY KEY,
@@ -858,6 +869,79 @@ impl Store {
             out.push(r?);
         }
         Ok(out)
+    }
+
+    // -------------------------------------------------------- recent directories
+
+    /// How many directories are remembered.
+    ///
+    /// Enough to cover months of real work, small enough that ranking them all in memory
+    /// is cheaper than asking SQLite to do it.
+    pub const MAX_RECENT_DIRS: usize = 500;
+
+    /// Note that a directory was visited.
+    pub fn record_directory(&self, path: &str) -> Result<()> {
+        let path = path.trim_end_matches('/');
+        // The root is not a place anyone means to go back to, and an empty path is not a
+        // place at all.
+        if path.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO recent_dirs (path, visits, last_used) VALUES (?1, 1, ?2)
+             ON CONFLICT(path) DO UPDATE SET visits = visits + 1, last_used = ?2",
+            params![path, rfc3339(&tervin_core::now())],
+        )?;
+
+        // Trimmed here rather than by a background job: the table is tiny and this keeps
+        // the bound true at all times instead of eventually.
+        conn.execute(
+            "DELETE FROM recent_dirs WHERE path NOT IN (
+                 SELECT path FROM recent_dirs ORDER BY last_used DESC LIMIT ?1
+             )",
+            params![Self::MAX_RECENT_DIRS as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Every remembered directory with its visit count and age in hours.
+    ///
+    /// Returned unranked so the caller can combine this with a fuzzy match on the query —
+    /// ranking here and filtering there would apply the two in the wrong order.
+    pub fn recent_directories(&self) -> Result<Vec<RecentDir>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT path, visits, last_used FROM recent_dirs ORDER BY last_used DESC LIMIT ?1",
+        )?;
+        let now = tervin_core::now();
+        let rows = stmt.query_map(params![Self::MAX_RECENT_DIRS as i64], |r| {
+            let path: String = r.get(0)?;
+            let visits: i64 = r.get(1)?;
+            let last: String = r.get(2)?;
+            Ok((path, visits, last))
+        })?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            let (path, visits, last) = row?;
+            let age_hours = chrono::DateTime::parse_from_rfc3339(&last)
+                .map(|t| (now - t.with_timezone(&chrono::Utc)).num_minutes() as f64 / 60.0)
+                .unwrap_or(f64::MAX);
+            out.push(RecentDir {
+                path,
+                visits: visits.max(0) as u32,
+                age_hours: age_hours.max(0.0),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Forget a directory — used when it no longer exists.
+    pub fn forget_directory(&self, path: &str) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM recent_dirs WHERE path = ?1", params![path])?;
+        Ok(())
     }
 
     // ------------------------------------------------------- pane scrollback
@@ -1913,5 +1997,129 @@ mod saved_command_tests {
         let store = Store::open_in_memory().unwrap();
         assert!(store.record_saved_command_use("sc_never").is_ok());
         assert!(store.delete_saved_command("sc_never").is_ok());
+    }
+}
+
+/// Recent directories: recording, bounding, and what frecency is for.
+#[cfg(test)]
+mod recent_dir_tests {
+    use super::*;
+    use crate::model::RecentDir;
+
+    #[test]
+    fn records_a_visit_and_counts_repeats() {
+        let store = Store::open_in_memory().unwrap();
+        store.record_directory("/proj/app").unwrap();
+        store.record_directory("/proj/app").unwrap();
+        store.record_directory("/proj/docs").unwrap();
+
+        let dirs = store.recent_directories().unwrap();
+        let app = dirs.iter().find(|d| d.path == "/proj/app").unwrap();
+        assert_eq!(app.visits, 2);
+        assert_eq!(dirs.len(), 2);
+    }
+
+    #[test]
+    fn a_trailing_slash_is_the_same_directory() {
+        // OSC 7 reports a trailing slash on some shells and not others. Two entries for
+        // one directory would split its visit count and rank it lower than it deserves.
+        let store = Store::open_in_memory().unwrap();
+        store.record_directory("/proj/app").unwrap();
+        store.record_directory("/proj/app/").unwrap();
+
+        let dirs = store.recent_directories().unwrap();
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].visits, 2);
+    }
+
+    #[test]
+    fn an_empty_path_is_not_a_place() {
+        let store = Store::open_in_memory().unwrap();
+        store.record_directory("").unwrap();
+        store.record_directory("/").unwrap();
+        // `/` normalises to empty once the trailing slash is stripped, and nobody means
+        // to navigate back to the root from a picker.
+        assert!(store.recent_directories().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_table_stays_bounded() {
+        let store = Store::open_in_memory().unwrap();
+        for i in 0..Store::MAX_RECENT_DIRS + 40 {
+            store.record_directory(&format!("/proj/dir{i}")).unwrap();
+        }
+        // Trimmed on write, so the bound holds at all times rather than eventually.
+        assert_eq!(
+            store.recent_directories().unwrap().len(),
+            Store::MAX_RECENT_DIRS
+        );
+    }
+
+    #[test]
+    fn forgetting_removes_one_directory() {
+        let store = Store::open_in_memory().unwrap();
+        store.record_directory("/proj/gone").unwrap();
+        store.record_directory("/proj/here").unwrap();
+        store.forget_directory("/proj/gone").unwrap();
+
+        let paths: Vec<String> = store
+            .recent_directories()
+            .unwrap()
+            .into_iter()
+            .map(|d| d.path)
+            .collect();
+        assert_eq!(paths, vec!["/proj/here".to_string()]);
+    }
+
+    #[test]
+    fn a_freshly_recorded_directory_reads_as_recent() {
+        let store = Store::open_in_memory().unwrap();
+        store.record_directory("/proj/app").unwrap();
+        // The age is computed at read time, so a just-recorded directory must land in
+        // the "today" band rather than at some default.
+        assert!(store.recent_directories().unwrap()[0].age_hours < 1.0);
+    }
+
+    /// The ranking itself, which is the part that decides whether the feature feels
+    /// right. Tested on the value rather than through the database, so each case is one
+    /// clear comparison.
+    #[test]
+    fn frecency_prefers_where_you_actually_work() {
+        let dir = |visits, age_hours| RecentDir {
+            path: "/x".to_string(),
+            visits,
+            age_hours,
+        };
+
+        // The case pure recency gets wrong: you glance at a directory once, and it
+        // outranks the one you have been in fifty times today.
+        let daily = dir(50, 2.0);
+        let glanced = dir(1, 0.1);
+        assert!(daily.frecency() > glanced.frecency());
+
+        // The case a pure visit count gets wrong: somewhere you lived in months ago and
+        // have not opened since stays at the top forever.
+        let abandoned = dir(80, 24.0 * 90.0);
+        let current = dir(10, 3.0);
+        assert!(current.frecency() > abandoned.frecency());
+
+        // And within the same band, more visits wins.
+        assert!(dir(9, 3.0).frecency() > dir(3, 3.0).frecency());
+        // While across bands, the same count decays.
+        assert!(dir(5, 1.0).frecency() > dir(5, 24.0 * 10.0).frecency());
+    }
+
+    #[test]
+    fn frecency_never_goes_negative_or_undefined() {
+        // `age_hours` is clamped at read time, but a row with a corrupt timestamp reads
+        // as f64::MAX and must still produce a usable ordering rather than a NaN that
+        // makes the sort comparator arbitrary.
+        let broken = RecentDir {
+            path: "/x".to_string(),
+            visits: 0,
+            age_hours: f64::MAX,
+        };
+        assert!(broken.frecency().is_finite());
+        assert!(broken.frecency() >= 0.0);
     }
 }

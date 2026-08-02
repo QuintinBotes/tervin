@@ -85,6 +85,14 @@ Tervin also **never answers `allow`** through a hook — only `deny` or `defer`.
 would skip the runtime's *own* checks, and a safety feature that quietly disables
 another safety feature is not one.
 
+## `cd` knows where you have been
+
+⌘J opens a picker over every directory a pane has sat in, ranked by how often you go there
+and how recently — then by what you typed. It fills in `cd` and leaves the newline to you.
+
+Not bound to Tab: zsh and fish completion is better than anything Tervin would write for
+arbitrary commands, and taking Tab would replace something good with something worse.
+
 ## It reopens where you left off
 
 Tabs, splits, each pane's directory and its recent output come back on launch. The
