@@ -66,6 +66,13 @@ pub struct ShellAliases {
     pub shell: Option<Shell>,
     /// Anything that went wrong while enumerating, shown rather than swallowed.
     pub notes: Vec<String>,
+    /// True when the shell was actually asked.
+    ///
+    /// Without this, "you have no aliases" and "Tervin could not read them" are the
+    /// same empty list. They are not the same thing at all: alias discovery is how a
+    /// second agent account gets found, so failing to check it silently means a user
+    /// never learns their `claude-work` profile was there to adopt.
+    pub enumerated: bool,
 }
 
 impl ShellAliases {
@@ -96,7 +103,10 @@ impl ShellAliases {
 
         let (args, _) = enumeration_command(shell);
         match run_with_timeout(&program, &args, ENUMERATION_TIMEOUT) {
-            Ok(text) => out.absorb(shell, &text),
+            Ok(text) => {
+                out.enumerated = true;
+                out.absorb(shell, &text);
+            }
             Err(e) => out
                 .notes
                 .push(format!("Could not read aliases from {}: {e}", shell.name())),
@@ -727,11 +737,22 @@ mod tests {
             return;
         }
         let loaded = ShellAliases::load();
-        // Either aliases were found, or a note explains why not. Silence is the
-        // one unacceptable outcome.
+
+        // The invariant is "either the shell was asked, or there is a note saying why
+        // not" — never silence. An earlier version of this test demanded aliases or a
+        // note, which fails on a machine that simply has no aliases: a bare CI runner,
+        // for one. That is a legitimate outcome, and the assertion was wrong rather
+        // than the behaviour.
         assert!(
-            !loaded.is_empty() || !loaded.notes.is_empty(),
-            "enumeration produced neither aliases nor an explanation"
+            loaded.enumerated || !loaded.notes.is_empty(),
+            "enumeration neither ran nor explained itself"
         );
+
+        // Anything found has to be usable: an empty name would break expansion, and a
+        // self-referential alias would loop it.
+        for (name, value) in &loaded.aliases {
+            assert!(!name.is_empty(), "an alias with no name");
+            assert_ne!(name, value, "an alias that expands to itself: {name}");
+        }
     }
 }

@@ -402,6 +402,14 @@ export interface ShellAliases {
   global_aliases: Record<string, string>;
   shell: string | null;
   notes: string[];
+  /**
+   * Whether the shell was actually asked.
+   *
+   * Distinguishes "you have no aliases" from "Tervin could not read them" — the same
+   * empty list otherwise. It matters because alias discovery is how a second agent
+   * account gets found, so a silent failure means never learning a profile was there.
+   */
+  enumerated: boolean;
 }
 
 export interface IntegrationStatus {
