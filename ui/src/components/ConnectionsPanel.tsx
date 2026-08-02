@@ -25,6 +25,10 @@ export function ConnectionsPanel() {
   // security team.
   const [reach, setReach] = useState<Record<string, api.Reachability>>({});
   const [checking, setChecking] = useState<string | null>(null);
+  // Unlike a probe, this touches nothing on the network: it asks the local agent one
+  // question. So it runs when the panel opens, and the answer is worth having before a
+  // connection stops to ask for a passphrase.
+  const [keys, setKeys] = useState<Record<string, api.KeyStatus>>({});
 
   async function check(alias: string) {
     setChecking(alias);
@@ -37,6 +41,14 @@ export function ConnectionsPanel() {
       setChecking(null);
     }
   }
+
+  useEffect(() => {
+    api
+      .sshKeyStatus()
+      .then((rows) => setKeys(Object.fromEntries(rows)))
+      // A machine with no agent is ordinary, not an error worth a notice.
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!s.connections) void s.refreshConnections();
@@ -142,6 +154,7 @@ export function ConnectionsPanel() {
                     key
                   </span>
                 )}
+                <KeyChip state={keys[host.alias]} />
                 <ReachabilityChip alias={host.alias} state={reach[host.alias]} />
                 <button
                   className="btn btn-xs btn-ghost"
@@ -405,5 +418,42 @@ function ReachabilityChip({
           not checkable
         </span>
       );
+  }
+}
+
+/**
+ * Whether this host's key is in the agent.
+ *
+ * Only shown when it says something useful. A loaded key is the normal case and needs no
+ * chip: a row decorated with "fine" for every host is noise that hides the one that is not.
+ */
+function KeyChip({ state }: { state: api.KeyStatus | undefined }) {
+  if (!state) return null;
+
+  switch (state.status) {
+    case "not_loaded":
+      // The whole point of the feature: this connection is about to stop and ask.
+      return (
+        <span
+          className="chip tone-amber"
+          title={`${state.path} is not in the agent, so connecting will ask for its passphrase. Add it with: ssh-add --apple-use-keychain ${state.path}`}
+        >
+          key not loaded
+        </span>
+      );
+    case "cannot_fingerprint":
+      // Deliberately not "not loaded": the key may well be in the agent, and saying it is
+      // not would send someone looking for a problem that is not there.
+      return (
+        <span className="chip" title={`${state.path}: ${state.reason}`}>
+          key not checkable
+        </span>
+      );
+    // A loaded key, a host that names none, and an agent that could not be reached are all
+    // states where a chip would add nothing a person can act on.
+    case "loaded":
+    case "no_identity_named":
+    case "unknown":
+      return null;
   }
 }
