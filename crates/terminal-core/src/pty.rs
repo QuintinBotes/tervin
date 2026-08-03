@@ -306,6 +306,27 @@ impl PtySession {
             cmd.env_remove(key);
         }
 
+        // The other half of the same problem: the build tool that started Tervin.
+        //
+        // `pnpm app` exports eighteen of these, and every one reaches the user's
+        // shell — `INIT_CWD` pointing at wherever the build was run, an
+        // `npm_config_user_agent` claiming this shell is pnpm, `npm_lifecycle_event`
+        // saying it is running a script called `app`. A shell that believes it is
+        // inside `npm run` is not a shell anyone opened, and tools that check these
+        // will behave differently in a Tervin pane than in Terminal for no reason
+        // the user can see.
+        //
+        // Matched by prefix because the set is open-ended and grows with the
+        // package manager. `NODE_` is deliberately not swept: `NODE_OPTIONS` and
+        // friends are things a user may genuinely set for themselves.
+        let inherited: Vec<String> = std::env::vars()
+            .map(|(k, _)| k)
+            .filter(|k| k.starts_with("npm_") || k.starts_with("PNPM_") || k == "INIT_CWD")
+            .collect();
+        for key in inherited {
+            cmd.env_remove(key);
+        }
+
         for (k, v) in &config.env {
             cmd.env(k, v);
         }
