@@ -52,11 +52,8 @@ export function BlocksPanel({ failuresOnly = false }: Props) {
     setExpanded(block.id);
     if (!fullOutput[block.id]) {
       try {
-        const bytes = await api.blockOutput(block.id);
-        setFullOutput((prev) => ({
-          ...prev,
-          [block.id]: new TextDecoder().decode(bytes),
-        }));
+        const text = await api.blockOutput(block.id);
+        setFullOutput((prev) => ({ ...prev, [block.id]: text }));
       } catch {
         // The spill file may have been cleaned up; the preview still shows.
       }

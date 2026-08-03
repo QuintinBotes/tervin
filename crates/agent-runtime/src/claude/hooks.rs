@@ -13,17 +13,22 @@
 //!    configuration is never read, rewritten, or overridden.
 //! 3. Before each tool call the agent runs that command, handing it the tool name
 //!    and arguments on stdin.
-//! 4. The command asks the running Tervin, which consults Tervin Rules, and prints
-//!    the decision.
+//! 4. The command asks the running Tervin, which consults Tervin Rules. A refusal is
+//!    written to stderr and exits 2. Anything else says nothing and exits 0.
 //!
 //! ## Tervin can only tighten, never loosen
 //!
 //! The protocol offers `allow`, which skips the runtime's *own* permission checks.
-//! Tervin never returns it. When Rules do not object it returns `defer`, which
-//! means "no opinion — carry on through the normal flow". So enabling this gate can
-//! only ever add a refusal; it can never turn an action the runtime would have
-//! asked about into one it performs silently. A safety feature that quietly
-//! disables another safety feature is not one.
+//! Tervin never returns it. When Rules do not object the hook says **nothing at all**
+//! and exits 0, which is how this protocol spells "no opinion — carry on through the
+//! normal flow". So enabling this gate can only ever add a refusal; it can never turn
+//! an action the runtime would have asked about into one it performs silently. A
+//! safety feature that quietly disables another safety feature is not one.
+//!
+//! Saying "no opinion" out loud is not equivalent to staying quiet. The runtime
+//! accepts `allow`, `deny` and `ask` and nothing else; anything else ends the turn
+//! immediately and reports success. Since this gate sees every tool call, that
+//! landed on the first one and killed every Thread at its first action.
 //!
 //! ## What this gate cannot do
 //!
@@ -83,7 +88,11 @@ pub enum HookDecision {
 }
 
 impl HookDecision {
-    /// The exact JSON the runtime expects on stdout.
+    /// The decision as it travels from Tervin to its own hook client.
+    ///
+    /// Not what the client prints. `defer` is Tervin's word for "no objection" and
+    /// is meaningless to the runtime, which would end the turn on being handed it —
+    /// so only a denial reaches the runtime, as a reason on stderr with exit 2.
     pub fn to_json(&self) -> Value {
         let (decision, reason) = match self {
             Self::Deny { reason } => ("deny", reason),
@@ -518,7 +527,18 @@ pub fn run_hook_client(socket: &Path) -> i32 {
         return 2;
     }
 
-    println!("{decision}");
+    // Silence is how this protocol spells "no opinion", and saying anything else
+    // here is not the harmless no-op it looks like.
+    //
+    // The runtime accepts `allow`, `deny` and `ask`. It does not accept `defer`, and
+    // on receiving one it **ends the turn on the spot** and reports success: no tool
+    // result, no continuation, the agent simply stops mid-task. Because Tervin gates
+    // every tool call, that fired on the *first* one, so every Thread died at its
+    // first action while the gate panel said it was protecting the session. Printing
+    // a decision that meant "carry on" was the thing stopping everything.
+    //
+    // Tervin only ever tightens. When Rules do not object there is nothing to say,
+    // and the exit code alone says it.
     0
 }
 
@@ -742,7 +762,7 @@ mod tests {
         }))
         .unwrap();
 
-        let (code, stderr) = run_client_capturing(&socket, &payload).await;
+        let (code, _out, stderr) = run_client_capturing(&socket, &payload).await;
         assert_eq!(code, 2, "a denial must exit 2 or the tool runs anyway");
         assert!(
             stderr.contains("test policy"),
@@ -768,7 +788,7 @@ mod tests {
 
         let socket = gate.socket_path().to_path_buf();
         let payload = r#"{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"/p/a.rs"},"cwd":"/tmp"}"#;
-        let (code, _) = run_client_capturing(&socket, payload).await;
+        let (code, _out, _err) = run_client_capturing(&socket, payload).await;
         assert_eq!(code, 0);
         assert!(gate.denials().is_empty());
     }
@@ -787,7 +807,7 @@ mod tests {
         .unwrap();
 
         let socket = gate.socket_path().to_path_buf();
-        let (code, _) = run_client_capturing(&socket, "this is not json").await;
+        let (code, _out, _err) = run_client_capturing(&socket, "this is not json").await;
         assert_eq!(code, 2, "input Tervin cannot read must not be allowed");
     }
 
@@ -797,7 +817,7 @@ mod tests {
         // believes actions are being checked.
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("nothing.sock");
-        let (code, stderr) = run_client_capturing(&missing, "{}").await;
+        let (code, _out, stderr) = run_client_capturing(&missing, "{}").await;
         // Not 2: blocking on Tervin being down would make an unrelated crash stop
         // the user's work.
         assert_eq!(code, 1);
@@ -1000,7 +1020,7 @@ mod tests {
         let socket = gate.socket_path().to_path_buf();
 
         let deny = r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf /"},"cwd":"/tmp"}"#;
-        let (code, err) = run_client_capturing(&socket, deny).await;
+        let (code, _out, err) = run_client_capturing(&socket, deny).await;
         assert_ne!(
             code, 1,
             "exit 1 means the client never got an answer: {err}"
@@ -1011,9 +1031,22 @@ mod tests {
         );
 
         let allow = r#"{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"/p/a.rs"},"cwd":"/tmp"}"#;
-        let (code, err) = run_client_capturing(&socket, allow).await;
+        let (code, out, err) = run_client_capturing(&socket, allow).await;
         assert_ne!(code, 1, "exit 1 means no answer: {err}");
         assert_eq!(code, 0, "a permitted action defers, which exits 0: {err}");
+
+        // Nothing on stdout, and this is the assertion the gate most needs.
+        //
+        // The runtime accepts `allow`, `deny` and `ask`. Handed anything else — such
+        // as Tervin's own word for "no objection" — it ends the turn immediately and
+        // reports success, so the agent stops at its first tool call having done
+        // nothing. Every Thread died that way while the exit code, the stderr and
+        // the audit trail all said the gate was working correctly, which is exactly
+        // why stdout is captured here at all.
+        assert!(
+            out.trim().is_empty(),
+            "the gate must say nothing when it does not object, got: {out:?}"
+        );
 
         // The denial is recorded, because a refusal that is not inspectable
         // afterwards is not an audit trail.
@@ -1053,8 +1086,12 @@ mod tests {
 
         let mut codes = Vec::new();
         for task in tasks {
-            let (code, err) = task.await.unwrap();
+            let (code, out, err) = task.await.unwrap();
             assert_ne!(code, 1, "a concurrent call went unanswered: {err}");
+            assert!(
+                out.trim().is_empty(),
+                "no call may print a decision the runtime would choke on: {out:?}"
+            );
             codes.push(code);
         }
         codes.sort_unstable();
@@ -1079,12 +1116,17 @@ mod tests {
         }
     }
 
-    /// Run the real client against a socket, capturing its exit code and stderr.
+    /// Run the real client against a socket, capturing exit code, stdout and stderr.
     ///
     /// The client is deliberately a blocking, process-shaped function, so it is
     /// driven here the same way the runtime drives it: a child process with the
     /// payload on stdin.
-    async fn run_client_capturing(socket: &Path, payload: &str) -> (i32, String) {
+    ///
+    /// Stdout is captured and returned because it was once discarded here, and the
+    /// gate's worst bug lived in it: the client printed a decision the runtime does
+    /// not accept, which ended every Thread at its first tool call. Exit codes and
+    /// stderr were asserted throughout and all of them were correct.
+    async fn run_client_capturing(socket: &Path, payload: &str) -> (i32, String, String) {
         let socket = socket.to_path_buf();
         let payload = payload.to_string();
         tokio::task::spawn_blocking(move || {
@@ -1111,6 +1153,7 @@ mod tests {
             let out = child.wait_with_output().expect("client did not finish");
             (
                 out.status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&out.stdout).to_string(),
                 String::from_utf8_lossy(&out.stderr).to_string(),
             )
         })

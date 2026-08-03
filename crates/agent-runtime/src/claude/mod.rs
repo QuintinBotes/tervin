@@ -613,12 +613,6 @@ pub struct ClaudeSession {
 }
 
 impl ClaudeSession {
-    /// Take the raw-payload stream, so the store can persist what the runtime
-    /// actually said behind each event.
-    pub fn take_raw_stream(&self) -> Option<mpsc::UnboundedReceiver<(String, String)>> {
-        self.raw_rx.lock().take()
-    }
-
     async fn write_line(&self, value: &Value) -> Result<()> {
         if !self.shared.running.load(Ordering::SeqCst) {
             return Err(RuntimeError::SessionEnded);
@@ -819,6 +813,10 @@ impl AgentSession for ClaudeSession {
         self.shared.running.load(Ordering::SeqCst)
     }
 
+    fn take_raw_stream(&self) -> Option<mpsc::UnboundedReceiver<(String, String)>> {
+        self.raw_rx.lock().take()
+    }
+
     async fn shutdown(&self) -> Result<()> {
         self.shared.running.store(false, Ordering::SeqCst);
         // Closing stdin asks the runtime to finish; `kill_on_drop` is the backstop.
@@ -867,6 +865,12 @@ async fn read_stream(
         if trimmed.is_empty() {
             continue;
         }
+
+        // Every protocol line, verbatim, behind `TERVIN_LOG=trace`. When a Thread
+        // behaves in a way the timeline cannot explain, this is the only account of
+        // what the runtime actually said, and needing a code change to obtain it is
+        // how a one-off oddity becomes unreproducible.
+        tracing::trace!(target: "tervin::claude::protocol", line = %trimmed);
 
         let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
             // Not JSON. Some builds print banners or warnings on stdout; record
