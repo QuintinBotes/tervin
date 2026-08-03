@@ -210,6 +210,14 @@ export function ThreadPanel() {
           profile_id: profile?.id ?? null,
           prompt: text,
           attachments,
+          // Where the focused pane is, not the project root.
+          //
+          // Consistency rather than preference: `@path` completion in this very
+          // composer already resolves against the pane's directory, so a Thread
+          // started in the project root could be handed a path that completed to
+          // one file and means another. The terminal is the context the user is
+          // working in, and the agent they launch from it should share that.
+          cwd: focusedCwd,
           model: s.activeModel || null,
           effort: s.activeEffort || null,
           // Only meaningful here. An agent proposes a plan by calling
@@ -249,12 +257,16 @@ export function ThreadPanel() {
    *
    * For a running Thread this is the runtime's own answer rather than the
    * directory Tervin asked for, because they can differ and the runtime's is the
-   * one that decides what every path means. With no Thread it is the project root,
-   * which is where the next one will start — deliberately not the focused pane's
-   * directory, and worth saying so before someone assumes otherwise.
+   * one that decides what every path means.
+   *
+   * With no Thread it is where the next one will start: the focused pane's
+   * directory, falling back to the project root when no pane has one. Shown
+   * before starting rather than discovered after, because it follows the terminal
+   * and will therefore change as the user moves around.
    */
   const threadCwd =
-    thread?.info?.metadata?.cwd ?? (thread ? null : (s.environment?.project_root ?? null));
+    thread?.info?.metadata?.cwd ??
+    (thread ? null : (focusedCwd ?? s.environment?.project_root ?? null));
 
   return (
     // `width: 100%` and `minWidth: 0` are load-bearing: this renders as a flex item,
@@ -305,11 +317,15 @@ export function ThreadPanel() {
         ) : (
           <span className="col grow" style={{ gap: 0, minWidth: 0 }}>
             <span className="meta">No Thread running</span>
-            {/* Said before starting, not after. A Thread runs in the project root
-                rather than the focused pane's directory, which is not what someone
-                who has just navigated a pane elsewhere would assume. */}
+            {/* Said before starting, not after, and it moves: this follows the
+                focused pane, so `cd` in the terminal changes where the next Thread
+                will run. Showing it is what makes that predictable rather than
+                surprising. */}
             {threadCwd && (
-              <span className="meta mono truncate" title={threadCwd}>
+              <span
+                className="meta mono truncate"
+                title={`${threadCwd}\nA new Thread starts here, following the focused pane.`}
+              >
                 next Thread runs in {abbreviatePath(threadCwd)}
               </span>
             )}
