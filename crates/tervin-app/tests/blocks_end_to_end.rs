@@ -112,7 +112,7 @@ fn blocks_from(shell_program: &str, shell: Shell, commands: &[&str]) -> Vec<bloc
     // A shell that does not report prompts at all — bash 3.2, which macOS still
     // ships — is asked once and then left alone, because asking again only buys
     // another wait for an answer that is not coming.
-    let mut reports_prompts = wait_for_prompt(&rx, &mut builder, &mut finished);
+    let mut reports_prompts = wait_until_reading(&session, &rx, &mut builder, &mut finished);
     for command in commands {
         session.write(command.as_bytes()).expect("write failed");
         if reports_prompts {
@@ -148,6 +148,44 @@ fn blocks_from(shell_program: &str, shell: Shell, commands: &[&str]) -> Vec<bloc
 
     let _ = session.kill();
     finished
+}
+
+/// Wait until the shell is not merely showing a prompt but reading from the pty.
+///
+/// Those are different states, and the gap between them is where the first
+/// character of the first command went. `133;B` lives inside `PS1`, so it is
+/// emitted when the prompt is *printed*. zsh's line editor then calls `tcsetattr`
+/// with a flush, which discards anything typed in the meantime. On an idle machine
+/// that window is too narrow to hit. Under a full `cargo test --workspace` it is
+/// wide enough to swallow an `e` — which is why CI failed on `cho tervin-block-one`
+/// while running this crate on its own never did, and why waiting for the prompt
+/// marker alone was not enough.
+///
+/// So this asks the shell to prove it, rather than inferring readiness from output:
+/// send a newline and wait for the prompt drawn in reply. A prompt that appears
+/// *after* input was sent is one the shell could only have drawn by reading that
+/// input. An empty line runs no command, so it forms no Block and the counts the
+/// tests assert are unaffected. If the newline is swallowed too, that is simply a
+/// shell that was not ready, and asking again is the right response.
+fn wait_until_reading(
+    session: &terminal_core::PtySession,
+    rx: &mpsc::Receiver<PtyEvent>,
+    builder: &mut BlockBuilder,
+    finished: &mut Vec<block_engine::Block>,
+) -> bool {
+    // A shell that never reports a prompt cannot be asked to prove anything.
+    if !wait_for_prompt(rx, builder, finished) {
+        return false;
+    }
+    for _ in 0..5 {
+        if session.write(b"\n").is_err() {
+            return false;
+        }
+        if wait_for_prompt(rx, builder, finished) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Drain events until the shell has drawn a prompt, keeping any Blocks that finish.
