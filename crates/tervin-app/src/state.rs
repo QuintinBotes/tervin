@@ -288,6 +288,38 @@ pub const LAST_PROJECT_KEY: &str = "last_project_root";
 /// application launched from Finder or the Dock inherits `/`, which is not a
 /// project and not somewhere anyone wants a shell. So the cwd is used only when it
 /// is plausibly a project, and the home directory is the fallback.
+/// The project a directory belongs to, rather than the directory itself.
+///
+/// A working directory is not a project. Launched from `crates/tervin-app`, the
+/// bare cwd roots Tervin at one crate: the file index holds that crate's files and
+/// nothing else, so `@docs/` matches nothing because `docs/` is two levels up, and
+/// an agent started there cannot see the repository it is supposed to be working
+/// on. That is not a hypothetical — it is what `tauri dev` does, because it runs
+/// the binary from the Tauri crate's own directory whatever the user typed.
+///
+/// So this walks up to the outermost enclosing repository. Outermost rather than
+/// nearest, because a submodule or a nested package inside a repo is still part of
+/// that repo, and someone who wants the narrower scope can say so; someone who
+/// wanted the whole repo and silently got one crate has no way to even notice.
+///
+/// Never above the home directory. Rooting at `~` means indexing the account.
+fn enclosing_project(start: &std::path::Path, home: Option<&std::path::Path>) -> Option<PathBuf> {
+    // Markers that mean "a repository starts here", as opposed to the many that
+    // only mean "a package lives here" and appear at every level of a workspace.
+    const VCS: [&str; 3] = [".git", ".hg", ".jj"];
+
+    let mut outermost = None;
+    for dir in start.ancestors() {
+        if home.is_some_and(|h| dir == h) || dir.parent().is_none() {
+            break;
+        }
+        if VCS.iter().any(|marker| dir.join(marker).exists()) {
+            outermost = Some(dir.to_path_buf());
+        }
+    }
+    outermost
+}
+
 fn default_project_root() -> PathBuf {
     let home = dirs::home_dir();
 
@@ -297,7 +329,7 @@ fn default_project_root() -> PathBuf {
         // else means Tervin was launched from a directory on purpose.
         let is_home = home.as_ref().is_some_and(|h| &cwd == h);
         if !is_root && !is_home {
-            return cwd;
+            return enclosing_project(&cwd, home.as_deref()).unwrap_or(cwd);
         }
     }
 
@@ -355,7 +387,7 @@ impl PermissionArbiter for TervinArbiter {
                 .to_string(),
             _ => format!(
                 "{tool_name} {}",
-                agent_runtime::claude::normalize::summarise_tool_input(tool_name, input)
+                agent_runtime::claude::normalize::summarise_tool_input(tool_name, input, cwd)
             ),
         };
 
@@ -432,5 +464,72 @@ impl PermissionArbiter for TervinArbiter {
                 ArbiterDecision::Deny { reason }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::enclosing_project;
+
+    /// A repo with a crate inside it, and a home directory above both.
+    fn scaffold() -> tempfile::TempDir {
+        let home = tempfile::tempdir().unwrap();
+        let repo = home.path().join("Projects/thing");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("crates/inner")).unwrap();
+        std::fs::create_dir_all(repo.join("docs")).unwrap();
+        home
+    }
+
+    #[test]
+    fn a_directory_inside_a_repo_resolves_to_the_repo() {
+        // The bug this exists for. `tauri dev` runs the binary from the Tauri
+        // crate's directory whatever the user typed, so Tervin rooted itself at one
+        // crate: 64 files indexed out of the repo's several hundred, `@docs/`
+        // matching nothing because `docs/` is two levels up, and an agent unable to
+        // see the project it was started to work on.
+        let home = scaffold();
+        let repo = home.path().join("Projects/thing");
+
+        let found = enclosing_project(&repo.join("crates/inner"), Some(home.path()));
+        assert_eq!(found.as_deref(), Some(repo.as_path()));
+    }
+
+    #[test]
+    fn a_repo_inside_a_repo_resolves_to_the_outer_one() {
+        // A submodule or a vendored checkout is still part of its parent. Someone
+        // who wants the narrower scope can choose it; someone who wanted the whole
+        // repo and silently got a submodule has no way to notice.
+        let home = scaffold();
+        let repo = home.path().join("Projects/thing");
+        let nested = repo.join("vendor/dep");
+        std::fs::create_dir_all(nested.join(".git")).unwrap();
+
+        let found = enclosing_project(&nested, Some(home.path()));
+        assert_eq!(found.as_deref(), Some(repo.as_path()));
+    }
+
+    #[test]
+    fn a_directory_in_no_repo_at_all_resolves_to_nothing() {
+        // The caller then keeps the working directory, which is the honest answer
+        // when there is no project to find.
+        let home = scaffold();
+        let loose = home.path().join("Projects/loose");
+        std::fs::create_dir_all(&loose).unwrap();
+
+        assert!(enclosing_project(&loose, Some(home.path())).is_none());
+    }
+
+    #[test]
+    fn the_search_stops_at_the_home_directory() {
+        // Rooting at `~` means indexing the whole account, and on macOS walking
+        // into folders the system guards — which asks the user for their photos,
+        // from a terminal.
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join(".git")).unwrap();
+        let inside = home.path().join("scratch");
+        std::fs::create_dir_all(&inside).unwrap();
+
+        assert!(enclosing_project(&inside, Some(home.path())).is_none());
     }
 }

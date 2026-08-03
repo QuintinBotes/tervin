@@ -257,6 +257,15 @@ interface WorkspaceState {
   /** Empty string means "whatever the profile already selects", not an empty flag. */
   activeModel: string;
   activeEffort: string;
+  activeMode: string;
+  /**
+   * A directory chosen for the next Thread, overriding the focused pane.
+   *
+   * Null means "follow the terminal", which is the default and the usual case.
+   * Set when someone wants a Thread somewhere other than where they are standing,
+   * which the pane's directory alone cannot express.
+   */
+  activeCwd: string | null;
 
   // threads
   threads: Record<string, ThreadView>;
@@ -376,6 +385,10 @@ interface WorkspaceActions {
   setActiveProfile: (id: string) => void;
   setActiveModel: (model: string) => void;
   setActiveEffort: (effort: string) => void;
+  setActiveMode: (mode: string) => void;
+  setActiveCwd: (cwd: string | null) => void;
+  /** Clear the selection so the composer starts a Thread instead of continuing one. */
+  startNewThread: () => void;
 
   upsertThread: (thread: ThreadView) => void;
   appendThreadEvent: (event: api.TervinEvent) => void;
@@ -482,6 +495,8 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   agentsDiscovery: null,
   activeModel: "",
   activeEffort: "",
+  activeMode: "",
+  activeCwd: null,
   activeProfileId: null,
 
   threads: {},
@@ -900,9 +915,17 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   // Switching profile can switch runtime, and the previous runtime's model alias
   // may mean nothing to the new one. Cleared rather than carried, so a stale
   // selection cannot be sent to a runtime that would reject or misread it.
-  setActiveProfile: (activeProfileId) => set({ activeProfileId, activeModel: "", activeEffort: "" }),
+  setActiveProfile: (activeProfileId) =>
+    set({ activeProfileId, activeModel: "", activeEffort: "", activeMode: "" }),
   setActiveModel: (activeModel) => set({ activeModel }),
   setActiveEffort: (activeEffort) => set({ activeEffort }),
+  setActiveMode: (activeMode) => set({ activeMode }),
+  setActiveCwd: (activeCwd) => set({ activeCwd }),
+
+  // Deselecting is the whole mechanism: the composer starts a Thread when none is
+  // selected and continues one when it is. Without a way back to "none", a running
+  // Thread could not be left, so a second one could not be started at all.
+  startNewThread: () => set({ activeThreadId: null }),
 
   // ---------------------------------------------------------------- threads
 
@@ -944,7 +967,21 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
       if (!event.thread_id) return {};
       const existing = s.threads[event.thread_id];
       if (!existing) return {};
+
+      // A proposed plan stops the agent and waits on a person, so it is said out
+      // loud rather than left to be noticed. Deliberately a notice and a badge
+      // rather than switching surface: taking someone off the terminal mid-keystroke
+      // to show them something is worse than telling them it is there.
+      const notices =
+        event.payload.type === "plan.proposed"
+          ? [
+              ...s.notices,
+              "A plan is ready for your decision — open the Plan surface (⌘2).",
+            ]
+          : s.notices;
+
       return {
+        notices,
         threads: {
           ...s.threads,
           [event.thread_id]: { ...existing, events: [...existing.events, event] },
@@ -1122,6 +1159,21 @@ export function activeThreadCount(state: WorkspaceState): number {
 }
 
 /** Threads blocked on the user, which the top bar surfaces. */
+/**
+ * Threads that have proposed a plan and are waiting on a decision.
+ *
+ * A plan is the one moment where changing what an agent is about to do is still
+ * free, and it is worthless if nobody notices it happened. The Plan surface had no
+ * badge, so an agent could finish planning, stop, and wait indefinitely while the
+ * only sign was a tab that looked exactly like it had all session.
+ */
+export function threadsAwaitingPlan(state: WorkspaceState): ThreadView[] {
+  return Object.values(state.threads).filter((t) => {
+    if (t.state !== "waiting_for_permission") return false;
+    return t.events.some((e) => e.payload.type === "plan.proposed");
+  });
+}
+
 export function threadsNeedingUser(state: WorkspaceState): ThreadView[] {
   const needs: api.ThreadState[] = [
     "awaiting_input",

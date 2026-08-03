@@ -395,3 +395,39 @@ fn tervin_identifies_itself_to_the_child() {
         "got:\n{text}"
     );
 }
+
+#[test]
+fn a_pane_is_not_a_continuation_of_an_agent_session() {
+    // Tervin inherits these whenever it is launched from inside an agent session,
+    // and a shell that inherits them is not the shell the user thinks they opened.
+    // `claude` run in such a pane sees the marker, decides it is a child session,
+    // and silently stops saving transcripts — which is how this was found.
+    //
+    // Set on this process so the child can only be clean if the pane scrubs them.
+    // SAFETY: single-threaded at this point in the test; no other thread reads the
+    // environment concurrently.
+    unsafe {
+        std::env::set_var("CLAUDE_CODE_CHILD_SESSION", "1");
+        std::env::set_var("CLAUDECODE", "1");
+        // The build tool that launched Tervin leaks these the same way.
+        std::env::set_var("npm_lifecycle_event", "app");
+        std::env::set_var("INIT_CWD", "/somewhere/else");
+    }
+
+    let marker = only_in_output("child-marker");
+    let collected = run(
+        "/bin/sh",
+        &[],
+        &[&format!(
+            "echo {}${{CLAUDE_CODE_CHILD_SESSION:-none}}-${{CLAUDECODE:-none}}-${{npm_lifecycle_event:-none}}-${{INIT_CWD:-none}}\n",
+            marker
+        )],
+        |text| text.contains("child-marker"),
+    );
+    let text = plain(&collected.text);
+
+    assert!(
+        text.contains("child-marker") && text.contains("none-none-none-none"),
+        "the pane inherited state from whatever launched Tervin:\n{text}"
+    );
+}

@@ -293,6 +293,35 @@ pub enum EventPayload {
         duration_ms: Option<u64>,
     },
 
+    /// A subagent working inside a Thread, as it reports itself.
+    ///
+    /// The parent's `Task` call is a single tool use that can run for minutes while
+    /// a subagent does the work. Without this the timeline shows that one call and
+    /// then goes quiet, and a subagent reading twenty files is indistinguishable
+    /// from a Thread that has died — which is exactly how it was read.
+    #[serde(rename = "subagent.progress")]
+    SubagentProgress {
+        /// The parent `Task` call this belongs to, so its work can be attributed.
+        tool_use_id: String,
+        /// What kind of subagent, named by the runtime rather than guessed at.
+        subagent_type: String,
+        /// What it is doing at this moment.
+        description: String,
+        tool_uses: u64,
+        total_tokens: u64,
+        elapsed_ms: u64,
+    },
+
+    /// A subagent finished, so the Thread is its parent's again.
+    #[serde(rename = "subagent.finished")]
+    SubagentFinished {
+        tool_use_id: String,
+        subagent_type: String,
+        tool_uses: u64,
+        total_tokens: u64,
+        elapsed_ms: u64,
+    },
+
     #[serde(rename = "command.proposed")]
     CommandProposed {
         command: String,
@@ -506,6 +535,8 @@ impl EventPayload {
             Self::ThreadCompleted { .. } => "thread.completed",
             Self::ThreadFailed { .. } => "thread.failed",
             Self::ThreadState { .. } => "thread.state",
+            Self::SubagentProgress { .. } => "subagent.progress",
+            Self::SubagentFinished { .. } => "subagent.finished",
             Self::RuntimeUnclassified { .. } => "runtime.unclassified",
         }
     }

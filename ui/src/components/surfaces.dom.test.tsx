@@ -16,11 +16,11 @@
  */
 
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import * as api from "../lib/api";
 import { DEFAULT_APPEARANCE, useWorkspace, type ThreadView } from "../lib/store";
 import { BlocksPanel } from "./BlocksPanel";
-import { ThreadPanel } from "./ThreadPanel";
+import { ThreadPanel, abbreviatePath } from "./ThreadPanel";
 import { GitPanel } from "./GitPanel";
 import { ConnectionsPanel } from "./ConnectionsPanel";
 import { SavedCommands } from "./SavedCommands";
@@ -99,11 +99,251 @@ beforeEach(() => {
     agentsDiscovery: null,
     activeModel: "",
     activeEffort: "",
+    activeMode: "",
+    activeCwd: null,
+  });
+});
+
+describe("the Thread's working directory", () => {
+  it("is shown for a running Thread, from the runtime's own answer", () => {
+    // Every path an agent reads or writes is relative to this, and a Thread aimed
+    // at the wrong directory looks exactly like one aimed at the right directory
+    // until it edits something.
+    useWorkspace.setState({
+      activeThreadId: "thr_cwd",
+      threads: {
+        thr_cwd: {
+          id: "thr_cwd",
+          profileId: "p1",
+          runtimeId: "claude-code",
+          title: "find the bug",
+          state: "executing",
+          events: [],
+          capabilities: null,
+          permissions: null,
+          paneId: null,
+          info: {
+            running: true,
+            metadata: { hook_runs: [], cwd: "/Users/dev/Projects/tervin/crates/tervin-app" },
+          } as unknown as api.ThreadInfo,
+        } as ThreadView,
+      },
+    });
+    const { getByTitle } = render(<ThreadPanel />);
+    expect(getByTitle("/Users/dev/Projects/tervin/crates/tervin-app")).toBeTruthy();
+  });
+
+  it("says where the next Thread will run, as something you can change", () => {
+    // Not just a label. Before this the directory was inferred and unreachable:
+    // no way to see it without starting a Thread, and no way to set it at all.
+    useWorkspace.setState({
+      activeThreadId: null,
+      activeCwd: null,
+      environment: { project_root: "/Users/dev/Projects/tervin" } as unknown as api.ShellEnvironment,
+    });
+    const { getByRole } = render(<ThreadPanel />);
+    const button = getByRole("button", { name: /tervin/ });
+    expect(button.title).toContain("/Users/dev/Projects/tervin");
+    expect(button.title).toContain("Following the focused pane");
+  });
+
+  it("says when the directory is pinned rather than following the pane", () => {
+    // A directory that silently follows something else is fine. One that follows
+    // something else without saying so is how an agent works in the wrong repo.
+    useWorkspace.setState({
+      activeThreadId: null,
+      activeCwd: "/Users/dev/Projects/other",
+      environment: { project_root: "/Users/dev/Projects/tervin" } as unknown as api.ShellEnvironment,
+    });
+    const { getByRole, getByText } = render(<ThreadPanel />);
+    expect(getByRole("button", { name: /other/ }).title).toContain("Pinned");
+    // And a way back, or pinning would be a one-way door.
+    expect(getByText("unpin")).toBeTruthy();
+  });
+
+  it("is changed by typing a path, not by an OS file dialog", async () => {
+    // This is a terminal. The muscle memory is `cd`, the paths are already
+    // indexed, and a modal chooser for a directory you could type in four
+    // keystrokes is the wrong idiom in an app whose argument is that the keyboard
+    // is faster.
+    vi.spyOn(api, "pathComplete").mockResolvedValue([]);
+    useWorkspace.setState({
+      activeThreadId: null,
+      activeCwd: null,
+      environment: { project_root: "/Users/dev/Projects/tervin" } as unknown as api.ShellEnvironment,
+    });
+    const { getByRole, findByLabelText } = render(<ThreadPanel />);
+
+    getByRole("button", { name: /tervin/ }).click();
+    const input = (await findByLabelText("Directory for the next Thread")) as HTMLInputElement;
+
+    // `fireEvent` rather than assigning `value`: React tracks the previous value
+    // on the node and ignores a raw assignment, so the state never updates.
+    fireEvent.change(input, { target: { value: "/Users/dev/Projects/other" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(useWorkspace.getState().activeCwd).toBe("/Users/dev/Projects/other");
+  });
+
+  it("treats an emptied box as going back to following the pane", async () => {
+    // The obvious meaning of clearing it, and the same thing unpin does. Leaving a
+    // Thread pinned to "" would point an agent at nothing.
+    vi.spyOn(api, "pathComplete").mockResolvedValue([]);
+    useWorkspace.setState({
+      activeThreadId: null,
+      activeCwd: "/Users/dev/Projects/other",
+      environment: { project_root: "/Users/dev/Projects/tervin" } as unknown as api.ShellEnvironment,
+    });
+    const { getByRole, findByLabelText } = render(<ThreadPanel />);
+
+    getByRole("button", { name: /other/ }).click();
+    const input = (await findByLabelText("Directory for the next Thread")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(useWorkspace.getState().activeCwd).toBeNull();
+  });
+
+  it("follows the focused pane rather than the project root", () => {
+    // The terminal is the context the user is working in. It also has to match
+    // `@path` completion, which already resolves against the pane's directory —
+    // otherwise a completed path means one file in the composer and another in
+    // the Thread.
+    useWorkspace.setState({
+      activeThreadId: null,
+      environment: { project_root: "/Users/dev/Projects/tervin" } as unknown as api.ShellEnvironment,
+      activeTabId: "tab1",
+      tabs: [
+        { id: "tab1", title: "t", root: null, activePaneId: "pane1", zoomedPaneId: null },
+      ] as unknown as ReturnType<typeof useWorkspace.getState>["tabs"],
+      panes: {
+        pane1: {
+          id: "pane1",
+          title: "Shell",
+          cwd: "/Users/dev/Projects/tervin/crates/block-engine",
+          threadId: null,
+          exited: false,
+          exitCode: null,
+        },
+      },
+    });
+    const { getByRole } = render(<ThreadPanel />);
+    // The pane's directory wins, and the project root is not what is offered.
+    expect(getByRole("button", { name: /block-engine/ })).toBeTruthy();
+  });
+});
+
+describe("abbreviating a path", () => {
+  it("keeps the tail, because the head is what every path shares", () => {
+    // Truncating from the left leaves `/Users/dev/Projects/…`, which identifies
+    // nothing. The last segments are the part that says which directory this is.
+    const short = abbreviatePath("/Users/dev/Projects/tervin/crates/agent-runtime/src/claude");
+    expect(short).toContain("claude");
+    expect(short.startsWith("…/")).toBe(true);
+  });
+
+  it("writes the home directory as a tilde", () => {
+    expect(abbreviatePath("/Users/dev/proj")).toBe("~/proj");
+  });
+
+  it("leaves a short path alone", () => {
+    expect(abbreviatePath("/tmp/x")).toBe("/tmp/x");
+  });
+});
+
+describe("a running subagent", () => {
+  function threadWith(events: unknown[]): ThreadView {
+    return {
+      id: "thr_sub",
+      profileId: "p1",
+      runtimeId: "claude-code",
+      title: "find the bug",
+      state: "understanding",
+      events: events as ThreadView["events"],
+      capabilities: null,
+      permissions: null,
+      paneId: null,
+      info: { running: true, metadata: { hook_runs: [] } } as unknown as api.ThreadInfo,
+    };
+  }
+
+  const progress = (over: Record<string, unknown> = {}) => ({
+    id: "e1",
+    thread_id: "thr_sub",
+    ts: new Date().toISOString(),
+    summary: "Explore · Reading ThreadPanel.tsx",
+    payload: {
+      type: "subagent.progress",
+      tool_use_id: "toolu_1",
+      subagent_type: "Explore",
+      description: "Reading ThreadPanel.tsx",
+      tool_uses: 10,
+      total_tokens: 157251,
+      elapsed_ms: 22979,
+      ...over,
+    },
+  });
+
+  it("says what it is and what it has spent, so quiet is not mistaken for dead", () => {
+    // The report that prompted this: twenty file reads by an Explore subagent,
+    // none of them attributed, and a Thread that looked stopped while working.
+    useWorkspace.setState({
+      activeThreadId: "thr_sub",
+      threads: { thr_sub: threadWith([progress()]) },
+    });
+    const { getByText } = render(<ThreadPanel />);
+
+    expect(getByText("Explore")).toBeTruthy();
+    expect(getByText(/10 tools/)).toBeTruthy();
+    // Rounded, because the exact token count is noise at a glance.
+    expect(getByText(/157k tokens/)).toBeTruthy();
+    expect(getByText("Reading ThreadPanel.tsx")).toBeTruthy();
+  });
+
+  it("stops showing one that has finished", () => {
+    useWorkspace.setState({
+      activeThreadId: "thr_sub",
+      threads: {
+        thr_sub: threadWith([
+          progress(),
+          {
+            id: "e2",
+            thread_id: "thr_sub",
+            ts: new Date().toISOString(),
+            summary: "Explore finished · 10 tools · 157251 tokens",
+            payload: { type: "subagent.finished", tool_use_id: "toolu_1", subagent_type: "Explore" },
+          },
+        ]),
+      },
+    });
+    const { queryByText } = render(<ThreadPanel />);
+    expect(queryByText("Reading ThreadPanel.tsx")).toBeNull();
+  });
+
+  it("keeps the newest report rather than the first", () => {
+    // Progress arrives per tool call. Showing the first would freeze the counts at
+    // one, which is its own way of looking stuck.
+    useWorkspace.setState({
+      activeThreadId: "thr_sub",
+      threads: {
+        thr_sub: threadWith([
+          progress({ tool_uses: 1, description: "Reading store.ts" }),
+          { ...progress({ tool_uses: 9, description: "Reading api.ts" }), id: "e2" },
+        ]),
+      },
+    });
+    const { getByText, queryByText } = render(<ThreadPanel />);
+    expect(getByText(/9 tools/)).toBeTruthy();
+    expect(queryByText("Reading store.ts")).toBeNull();
   });
 });
 
 describe("the composer's launch pickers", () => {
-  function withRuntime(models: api.LaunchChoice[], efforts: api.LaunchChoice[]) {
+  function withRuntime(
+    models: api.LaunchChoice[],
+    efforts: api.LaunchChoice[],
+    modes: api.LaunchChoice[] = [],
+  ) {
     useWorkspace.setState({
       agents: {
         profiles: [
@@ -121,7 +361,7 @@ describe("the composer's launch pickers", () => {
           },
         ],
         default_profile: "p1",
-        launch_options: { "claude-code": { models, efforts } },
+        launch_options: { "claude-code": { models, efforts, modes } },
         profiles_path: "~/.config/tervin/agents.toml",
         mcp_path: "~/.config/tervin/mcp.json",
       },
@@ -156,6 +396,58 @@ describe("the composer's launch pickers", () => {
     const { queryByLabelText } = render(<ThreadPanel />);
     expect(queryByLabelText("Model")).toBeNull();
     expect(queryByLabelText("Effort")).toBeNull();
+  });
+
+  it("stays reachable while a Thread is running, marked as the next one's", () => {
+    // The case that made this change. Hidden during a run, the only moment the
+    // model picker could not be reached was while watching a Thread use the wrong
+    // model — and the way out was to abandon the view. It now says what it governs
+    // instead of disappearing.
+    withRuntime(
+      [
+        { value: "", label: "Profile default" },
+        { value: "sonnet", label: "Sonnet" },
+      ],
+      [],
+    );
+    useWorkspace.setState({
+      activeThreadId: "thr_live",
+      threads: {
+        thr_live: {
+          id: "thr_live",
+          profileId: "p1",
+          runtimeId: "claude-code",
+          title: "a Thread already running",
+          state: "executing",
+          events: [],
+          capabilities: null,
+          permissions: null,
+          paneId: null,
+          info: { running: true } as unknown as api.ThreadInfo,
+        } as ThreadView,
+      },
+    });
+
+    const { getByLabelText, getByText } = render(<ThreadPanel />);
+    expect(getByLabelText("Model")).toBeTruthy();
+    expect(getByText("next Thread")).toBeTruthy();
+  });
+
+  it("offers a start mode, without which the Plan surface can never fill", () => {
+    // The whole reason a mode belongs at launch. An agent proposes a plan by
+    // calling `ExitPlanMode`, and it only does that when it started in plan mode.
+    // Tervin sent no mode at all, so every Thread ran in `auto`, no plan event was
+    // ever emitted, and the Plan tab sat empty no matter how long anyone waited.
+    withRuntime([], [], [
+      { value: "plan", label: "Plan", note: "Proposes a plan and writes nothing." },
+      { value: "auto", label: "Auto" },
+    ]);
+    const { getByLabelText } = render(<ThreadPanel />);
+
+    const mode = getByLabelText("Start mode") as HTMLSelectElement;
+    expect([...mode.options].map((o) => o.value)).toEqual(["", "plan", "auto"]);
+    // Defaults to unset, so nothing is imposed on a user who has not chosen.
+    expect(mode.value).toBe("");
   });
 
   it("does not preselect a value the runtime never offered", () => {

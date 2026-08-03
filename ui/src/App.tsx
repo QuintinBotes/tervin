@@ -24,9 +24,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./lib/api";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   activeThreadCount,
+  describeError,
   overlayOpen,
+  threadsAwaitingPlan,
   threadsNeedingUser,
   useWorkspace,
   type Surface,
@@ -637,6 +640,7 @@ function TopBar({ keymap, waitingCount }: { keymap: Keymap; waitingCount: number
   const [profileOpen, setProfileOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const active = activeThreadCount(s);
+  const awaitingPlan = threadsAwaitingPlan(s).length;
   const git = s.gitStatus;
   const profile = s.agents?.profiles.find((p) => p.id === s.activeProfileId);
   const changed = git?.files.filter((f) => f.stage !== "untracked").length ?? 0;
@@ -667,10 +671,15 @@ function TopBar({ keymap, waitingCount }: { keymap: Keymap; waitingCount: number
     >
       <Mark size={16} />
 
+      {/* The project decides what the file index holds, what `@path` completes
+          against, and where a Thread starts. It was inferred at launch and there
+          was no way to change it from inside the app — so a Tervin that guessed a
+          subdirectory could not find the rest of the repository and could not be
+          told otherwise. The control that shows the project now also sets it. */}
       <button
         className="btn btn-sm"
-        onClick={() => s.setSettings(true)}
-        title={s.environment?.project_root ?? "Choose a project"}
+        onClick={() => void chooseProject(s)}
+        title={`${s.environment?.project_root ?? "Choose a project"}\nClick to open a different project.`}
         style={{ borderColor: "var(--tervin-raised)" }}
       >
         <span className="truncate" style={{ maxWidth: 170 }}>
@@ -696,6 +705,18 @@ function TopBar({ keymap, waitingCount }: { keymap: Keymap; waitingCount: number
             onClick={() => s.setSurface(surface.id)}
           >
             {surface.label}
+            {/* A plan is a decision the agent has stopped and is waiting on. Marked
+                the same way as the other surfaces that want something, because a
+                waiting plan with no badge is indistinguishable from no plan. */}
+            {surface.id === "plan" && awaitingPlan > 0 && (
+              <span
+                className="mono tabular tone-amber"
+                style={{ fontSize: "var(--text-tag)" }}
+                title="A plan is waiting for your decision"
+              >
+                {awaitingPlan}
+              </span>
+            )}
             {surface.id === "agents" && active > 0 && (
               <span className="mono dim tabular" style={{ fontSize: "var(--text-tag)" }}>
                 {active}
@@ -1152,6 +1173,16 @@ function runAction(action: string, pane: string | null): boolean {
       return true;
     }
 
+    // Deselects rather than creating anything. A Thread exists once it is started
+    // with a prompt, so this puts the composer back into the state where sending
+    // starts one — and it works while another Thread is running, which was the
+    // part that had no route at all.
+    case "thread.new":
+      s.startNewThread();
+      s.setSurface("agents");
+      s.setInspectorTab("thread");
+      return true;
+
     case "palette.open":
       s.setPalette(true);
       return true;
@@ -1255,6 +1286,38 @@ export function toneForState(state: api.ThreadState): string {
   if (["failed", "interrupted", "disconnected"].includes(state)) return "red";
   if (state === "unknown" || state === "idle") return "muted";
   return "teal";
+}
+
+/**
+ * Open a different project, and rebuild everything that depends on which one.
+ *
+ * The root is inferred at launch, and an inference can be wrong: `tauri dev` runs
+ * the binary from the Tauri crate's own directory, so Tervin would root itself at
+ * one crate and index sixty-odd files out of a repository of several hundred. With
+ * no way to change it from inside the app, the only fix was to relaunch from
+ * somewhere else — which a packaged build does not let you do at all.
+ *
+ * The environment is refreshed rather than assumed, so the path shown is the one
+ * the backend accepted after expanding and validating it.
+ */
+async function chooseProject(s: ReturnType<typeof useWorkspace.getState>) {
+  try {
+    const picked = await open({
+      directory: true,
+      multiple: false,
+      title: "Open a project",
+      defaultPath: s.environment?.project_root ?? undefined,
+    });
+    if (typeof picked !== "string") return;
+    await api.setProjectRoot(picked);
+    await s.refreshEnvironment();
+    // The index is rebuilt on the Rust side; git and Blocks are scoped to the
+    // project and would otherwise still describe the previous one.
+    await s.refreshGit();
+    await s.refreshBlocks();
+  } catch (e) {
+    s.pushNotice(describeError(e));
+  }
 }
 
 export function shortenPath(path: string): string {

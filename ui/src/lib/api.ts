@@ -312,6 +312,15 @@ export interface LaunchChoice {
 export interface LaunchOptions {
   models: LaunchChoice[];
   efforts: LaunchChoice[];
+  /**
+   * Permission modes selectable before a Thread starts.
+   *
+   * Not the same as the modes a live session reports. Plan mode only means
+   * anything at launch: an agent proposes a plan by calling `ExitPlanMode`, and it
+   * only does that when it started in plan mode. A Thread launched in `auto` can
+   * never produce one, so the Plan surface stays empty however long you wait.
+   */
+  modes: LaunchChoice[];
 }
 
 export interface AgentsOverview {
@@ -439,6 +448,15 @@ export interface SessionMetadata {
   instruction_sources: string[];
   /** The user's own hooks, as they actually ran. */
   hook_runs: HookRun[];
+  /**
+   * Where this Thread is working, as the runtime reports it.
+   *
+   * Not the pane's directory and not necessarily the one Tervin asked for. Every
+   * path an agent reads or writes is relative to this, and a Thread pointed at the
+   * wrong directory looks exactly like one pointed at the right directory right up
+   * until it edits something.
+   */
+  cwd?: string | null;
   /**
    * The modes this session offers. Empty means the runtime reported none, and the
    * UI shows no mode control rather than guessing at one.

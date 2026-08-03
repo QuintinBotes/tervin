@@ -283,6 +283,50 @@ impl PtySession {
         cmd.env("TERM_PROGRAM", "Tervin");
         cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.env("TERVIN_PANE", config.pane_id.as_str());
+
+        // A pane is a fresh shell, not a continuation of whatever started Tervin.
+        //
+        // These mark a process as living inside an agent session. Tervin inherits
+        // them whenever it is launched from one — from a Claude Code session, or
+        // from a terminal that was itself started by an agent — and a shell that
+        // inherits them is not the shell the user thinks they opened: `claude` run
+        // in that pane sees the marker, concludes it is a child session, and stops
+        // saving transcripts, which is how this was noticed.
+        //
+        // The agent runtime already scrubs these for Threads and says why. The same
+        // reasoning applies to panes and was simply never applied there.
+        for key in [
+            "CLAUDECODE",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "CLAUDE_PID",
+            "CLAUDE_PARENT_SESSION_ID",
+        ] {
+            cmd.env_remove(key);
+        }
+
+        // The other half of the same problem: the build tool that started Tervin.
+        //
+        // `pnpm app` exports eighteen of these, and every one reaches the user's
+        // shell — `INIT_CWD` pointing at wherever the build was run, an
+        // `npm_config_user_agent` claiming this shell is pnpm, `npm_lifecycle_event`
+        // saying it is running a script called `app`. A shell that believes it is
+        // inside `npm run` is not a shell anyone opened, and tools that check these
+        // will behave differently in a Tervin pane than in Terminal for no reason
+        // the user can see.
+        //
+        // Matched by prefix because the set is open-ended and grows with the
+        // package manager. `NODE_` is deliberately not swept: `NODE_OPTIONS` and
+        // friends are things a user may genuinely set for themselves.
+        let inherited: Vec<String> = std::env::vars()
+            .map(|(k, _)| k)
+            .filter(|k| k.starts_with("npm_") || k.starts_with("PNPM_") || k == "INIT_CWD")
+            .collect();
+        for key in inherited {
+            cmd.env_remove(key);
+        }
+
         for (k, v) in &config.env {
             cmd.env(k, v);
         }

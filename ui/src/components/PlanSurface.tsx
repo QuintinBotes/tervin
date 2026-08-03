@@ -99,8 +99,11 @@ export function PlanSurface({ narrow }: { narrow: boolean }) {
         {thread.capabilities?.plan_mode.level === "supported" ? (
           <>
             {" "}
-            This runtime supports plan mode — ask it to plan first, or switch the
-            Thread to plan mode from the composer.
+            This runtime supports plan mode, but a plan only appears if the Thread
+            was <strong>started</strong> in it: an agent proposes one by calling
+            `ExitPlanMode`, and it only does that when planning was the mode it
+            began with. Switching mode now will not produce one. Start a new Thread
+            with <strong>Start mode: Plan</strong> in the composer.
           </>
         ) : (
           <>
@@ -162,6 +165,48 @@ export function PlanSurface({ narrow }: { narrow: boolean }) {
     }
   }
 
+  /**
+   * Tell the agent to proceed as planned.
+   *
+   * Plan mode stops the agent and waits, and until now nothing in this surface
+   * said so or offered a way to release it. The only control sent a *revision* and
+   * was disabled until a step had been edited, so agreeing with a plan left you
+   * with no button at all and no indication that the Thread was blocked on you.
+   *
+   * Sent as a turn rather than as a protocol approval, because that is what the
+   * runtime is actually waiting for and it keeps the record honest: the transcript
+   * shows what was said, not an approval Tervin invented.
+   */
+  async function approve() {
+    const live = s.activeThreadId ? s.threads[s.activeThreadId] : null;
+    if (!live?.info?.running) return;
+    setBusy(true);
+    try {
+      await api.threadSend(live.id, "Approved. Go ahead with this plan.", []);
+    } catch (e) {
+      s.pushNotice(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Whether the agent has actually stopped and is waiting on this plan.
+   *
+   * `running` is not the question. A Thread that proposed a plan and then carried
+   * on editing is running *and* past the decision, so "Approve and continue" sent
+   * a turn into a live run and appeared to do nothing — which is exactly what was
+   * reported. Plan mode stops the agent, and that stop is the state to test.
+   */
+  const awaitingDecision =
+    thread.info?.running === true && thread.state === "waiting_for_permission";
+
+  const guidance = !thread.info?.running
+    ? "This Thread has ended. The plan is kept as a record."
+    : awaitingDecision
+      ? "The agent is waiting. Approve, revise the steps, or hand off from the Thread header."
+      : "The agent has moved on from this plan and is working. Nothing to approve.";
+
   const active = steps[selected];
 
   return (
@@ -183,6 +228,25 @@ export function PlanSurface({ narrow }: { narrow: boolean }) {
           </div>
 
           <div className="grow" style={{ overflow: "auto", minHeight: 0 }}>
+            {/* The agent wrote a plan; the parser only recognises bullets and
+                numbered lines. When it recognises none, the panel used to render
+                nothing at all — an empty column under a heading saying a plan had
+                been proposed. Showing the text as written is strictly better than
+                showing that the parse failed. */}
+            {steps.length === 0 && proposed.rawText && (
+              <div className="col" style={{ gap: "var(--sp-2)", padding: "var(--sp-3)" }}>
+                <span className="meta">
+                  This plan is not written as a list, so there are no steps to
+                  reorder. It is shown as the agent wrote it.
+                </span>
+                <pre
+                  className="selectable"
+                  style={{ whiteSpace: "pre-wrap", margin: 0, textWrap: "pretty" }}
+                >
+                  {proposed.rawText}
+                </pre>
+              </div>
+            )}
             {steps.map((step, i) => (
               <div
                 key={`${step.index}-${i}`}
@@ -264,22 +328,39 @@ export function PlanSurface({ narrow }: { narrow: boolean }) {
               flexWrap: "wrap",
             }}
           >
+            {/* The plan is a decision point, so the decisions are the controls.
+                Previously the only button sent a *revision* and was disabled until
+                something had been edited — so a plan you simply agreed with offered
+                nothing to press, and the surface gave no clue what happened next. */}
             <button
               className="btn btn-primary"
+              disabled={busy || !awaitingDecision}
+              onClick={() => void approve()}
+              title={
+                awaitingDecision
+                  ? "Tell the agent to go ahead with this plan"
+                  : "The agent is not waiting on a decision right now"
+              }
+            >
+              {busy ? "Sending…" : "Approve and continue"}
+            </button>
+            <button
+              className="btn"
               disabled={busy || !edited || !thread.info?.running}
               onClick={() => void sendRevision()}
               title={
-                thread.info?.running
-                  ? "Send the revised plan to the agent"
-                  : "The Thread is not running"
+                edited
+                  ? "Send the reordered plan back to the agent"
+                  : "Reorder, edit or skip a step first"
               }
             >
               {busy ? "Sending…" : "Send revised plan"}
             </button>
-            <span className="meta grow" style={{ textWrap: "pretty" }}>
-              {/* Never imply Tervin controls the runtime. */}
-              Edits here are a proposal. Tervin cannot make a runtime follow a
-              reordered plan — it asks.
+            {/* One short line. The previous wording was three sentences in a column
+                narrow enough to break them into single words, which is its own way
+                of saying nothing. */}
+            <span className="meta grow truncate" title={guidance}>
+              {guidance}
             </span>
           </div>
         </div>

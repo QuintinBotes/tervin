@@ -104,6 +104,9 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   { id: "connections.open", label: "Connections", keys: "mod+shift+o", when: "global" },
 
   // Agents.
+  // `mod+shift+n` is New tab. `mod+shift+i` is free and sits next to the Agents
+  // surface on `mod+3` in muscle memory rather than fighting tab creation.
+  { id: "thread.new", label: "New Thread", keys: "mod+shift+i", when: "global" },
   { id: "agent.profile", label: "Switch agent profile", keys: "mod+shift+p", when: "global" },
   { id: "agent.approve", label: "Approve pending request", keys: "mod+shift+a", when: "global" },
   { id: "agent.stop", label: "Stop Thread", keys: "mod+.", when: "global" },

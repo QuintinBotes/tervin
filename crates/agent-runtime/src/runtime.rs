@@ -219,6 +219,15 @@ pub struct SessionMetadata {
     pub modes: Vec<SessionMode>,
     /// Project instruction files the runtime says it loaded.
     pub instruction_sources: Vec<String>,
+    /// Where this Thread is actually working.
+    ///
+    /// Reported by the runtime rather than assumed from the launch config, because
+    /// they can differ and the runtime's answer is the true one. It matters more
+    /// than most metadata: every file an agent reads or writes is relative to it,
+    /// and a Thread pointed at the wrong directory looks identical to one pointed
+    /// at the right directory until it edits something.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 /// One execution of one of the user's hooks.
@@ -379,6 +388,14 @@ impl LaunchChoice {
 pub struct LaunchOptions {
     pub models: Vec<LaunchChoice>,
     pub efforts: Vec<LaunchChoice>,
+    /// Permission modes selectable *before* a Thread starts.
+    ///
+    /// Distinct from the modes a live session reports, and needed because some
+    /// modes only mean anything at launch. Plan mode is the case that matters: an
+    /// agent proposes a plan by calling `ExitPlanMode`, which it only does when it
+    /// started in plan mode, so a Thread launched in `auto` can never produce a
+    /// plan and the Plan surface stays empty however long you wait.
+    pub modes: Vec<LaunchChoice>,
 }
 
 /// A session plus the event stream it produces.

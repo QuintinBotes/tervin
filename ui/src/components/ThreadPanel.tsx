@@ -96,7 +96,9 @@ export function ThreadPanel() {
 
   // What was asked for and what is actually running. They differ whenever an alias
   // was used, which is most of the time, and the difference is what it costs.
-  const resolvedModel = thread?.info?.metadata.model ?? null;
+  // Guarded all the way down. A Thread can be observed before its metadata has
+  // arrived, and reaching through a missing one takes the whole panel with it.
+  const resolvedModel = thread?.info?.metadata?.model ?? null;
   const requestedModel = s.activeModel;
   const modelLine =
     resolvedModel && requestedModel && resolvedModel !== requestedModel
@@ -133,10 +135,31 @@ export function ThreadPanel() {
     });
   }, [s.pendingHandoff, s]);
 
+  /**
+   * The subagent currently doing the work, if there is one.
+   *
+   * Folded into a single live line rather than one row per report: a subagent
+   * emits progress on every tool call, so rendering each would bury the parent's
+   * own timeline under a subagent's file reads. The finish stays a real row, since
+   * that is a milestone rather than a heartbeat.
+   */
+  const activeSubagent = useMemo(() => {
+    if (!thread) return null;
+    let current: Record<string, unknown> | null = null;
+    for (const e of thread.events) {
+      if (e.payload.type === "subagent.progress") current = e.payload;
+      if (e.payload.type === "subagent.finished") current = null;
+    }
+    return current;
+  }, [thread]);
+
   const visible = useMemo(() => {
     if (!thread) return [];
     return thread.events.filter((e) => {
       if (e.payload.type === "runtime.unclassified") return false;
+      // Shown live above the composer instead, so a heartbeat does not become a
+      // timeline of its own.
+      if (e.payload.type === "subagent.progress") return false;
       if (!showReasoning && e.payload.type === "agent.message" && e.payload.is_reasoning)
         return false;
       if (e.payload.type === "thread.state") return false;
@@ -187,8 +210,21 @@ export function ThreadPanel() {
           profile_id: profile?.id ?? null,
           prompt: text,
           attachments,
+          // An explicitly chosen directory wins; otherwise the focused pane's.
+          //
+          // Consistency rather than preference: `@path` completion in this very
+          // composer already resolves against the pane's directory, so a Thread
+          // started in the project root could be handed a path that completed to
+          // one file and means another. The terminal is the context the user is
+          // working in, and the agent they launch from it should share that —
+          // unless they said otherwise, which is what `activeCwd` is for.
+          cwd: s.activeCwd ?? focusedCwd,
           model: s.activeModel || null,
           effort: s.activeEffort || null,
+          // Only meaningful here. An agent proposes a plan by calling
+          // `ExitPlanMode`, which it does only when it started in plan mode, so a
+          // mode chosen after the fact cannot produce one.
+          permission_mode: s.activeMode || null,
           task_title: text.slice(0, 80),
         });
         s.clearAttachments();
@@ -217,6 +253,21 @@ export function ThreadPanel() {
   const caps = thread?.capabilities;
   const perms = thread?.permissions;
 
+  /**
+   * Where the work is, or will be.
+   *
+   * For a running Thread this is the runtime's own answer rather than the
+   * directory Tervin asked for, because they can differ and the runtime's is the
+   * one that decides what every path means.
+   *
+   * With no Thread it is where the next one will start: the focused pane's
+   * directory, falling back to the project root when no pane has one. Shown
+   * before starting rather than discovered after, because it follows the terminal
+   * and will therefore change as the user moves around.
+   */
+  const nextCwd = s.activeCwd ?? focusedCwd ?? s.environment?.project_root ?? null;
+  const threadCwd = thread?.info?.metadata?.cwd ?? (thread ? null : nextCwd);
+
   return (
     // `width: 100%` and `minWidth: 0` are load-bearing: this renders as a flex item,
     // and a flex item with no width sizes to its content — which left the right-hand
@@ -235,7 +286,20 @@ export function ThreadPanel() {
         {thread ? (
           <>
             <span className={`dot dot-${toneForState(thread.state)}`} />
-            <span className="truncate grow" title={thread.title}>{thread.title}</span>
+            <span className="col grow truncate" style={{ gap: 0, minWidth: 0 }}>
+              <span className="truncate" title={thread.title}>
+                {thread.title}
+              </span>
+              {/* Where the work is happening, under the title rather than buried in
+                  a panel. Every path an agent reads or writes is relative to this,
+                  and a Thread pointed at the wrong directory is indistinguishable
+                  from one pointed at the right directory until it edits something. */}
+              {threadCwd && (
+                <span className="meta mono truncate" title={threadCwd}>
+                  {abbreviatePath(threadCwd)}
+                </span>
+              )}
+            </span>
             <span className={`meta tone-${toneForState(thread.state)}`}>
               {thread.state.replace(/_/g, " ")}
             </span>
@@ -251,7 +315,15 @@ export function ThreadPanel() {
             <HandoffButton threadId={thread.id} />
           </>
         ) : (
-          <span className="meta">No Thread running</span>
+          <span className="col grow" style={{ gap: 0, minWidth: 0 }}>
+            <span className="meta">No Thread running</span>
+            {/* Said before starting, and changeable. By default it follows the
+                focused pane, so `cd` in the terminal moves it; clicking pins it
+                somewhere else. Showing it is what makes a directory that moves
+                predictable rather than surprising, and being able to set it is
+                what makes a Thread reachable outside the pane you happen to be in. */}
+            {threadCwd && <NextThreadCwd path={threadCwd} pinned={s.activeCwd !== null} />}
+          </span>
         )}
       </div>
 
@@ -273,8 +345,12 @@ export function ThreadPanel() {
         )}
       </div>
 
-      {/* Capability and permission disclosure. */}
-      {thread && (caps || perms) && (
+      {/* Capability and permission disclosure, plus whatever is working right now.
+          A running subagent counts on its own: capabilities and permissions arrive
+          when the session reports them, and gating this strip on them would hide a
+          working subagent during exactly the early, quiet stretch that reads as a
+          dead Thread. */}
+      {thread && (caps || perms || activeSubagent) && (
         <div
           style={{
             borderTop: "1px solid var(--tervin-line)",
@@ -296,7 +372,8 @@ export function ThreadPanel() {
             </div>
           )}
           {caps && <CapabilityStrip caps={caps} />}
-          <HookRuns runs={thread.info?.metadata.hook_runs ?? []} />
+          {activeSubagent && <SubagentLine progress={activeSubagent} />}
+          <HookRuns runs={thread.info?.metadata?.hook_runs ?? []} />
         </div>
       )}
 
@@ -333,10 +410,12 @@ export function ThreadPanel() {
             </span>
           )}
 
-          {/* Model and effort, offered only where the runtime declares them and only
-              before a session exists: both are launch flags, so changing one after a
-              Thread is running would claim an effect it cannot have. */}
-          {!thread?.info?.running && <LaunchPickers profile={profile} />}
+          {/* Model and effort, wherever the runtime declares them. Always shown, even
+              while a Thread runs: they are launch flags, so they apply to the next
+              Thread rather than this one, and hiding them meant the only moment you
+              could not reach the model picker was while watching a Thread use the
+              wrong model. */}
+          <LaunchPickers profile={profile} appliesToNext={!!thread?.info?.running} />
 
           {/* Modes as the running session reported them. Never a hard-coded list:
               Claude Code offers four, an ACP agent offers whatever it defines, and
@@ -555,24 +634,40 @@ export function ThreadPanel() {
  * Model and reasoning effort, chosen before a Thread starts.
  *
  * Every option comes from the adapter, never from a list written here. Both are
- * launch flags rather than session controls, so they are offered only while there
- * is nothing running: a picker that appeared mid-session would imply an effect it
- * cannot deliver.
+ * launch flags rather than session controls, so they take effect when a Thread
+ * starts. They are shown regardless, and say so when a Thread is already running.
+ *
+ * They were once hidden while a Thread ran, on the reasoning that a control which
+ * cannot change the running session should not be offered. The effect was that the
+ * one moment the model picker could not be reached was while watching a Thread run
+ * on the wrong model, with no way to set the next one without abandoning the view.
+ * A control that says what it applies to beats a control that vanishes.
  *
  * The empty value is a real choice, not a placeholder. It means "whatever the
  * profile and the CLI already select", which is different from passing an empty
- * flag, and it is what a user who has not thought about models should get.
+ * flag, and it is what a user who has not thought about models should get. It is
+ * also why a Thread can run on the account's own default: nothing was overridden.
  */
-function LaunchPickers({ profile }: { profile: api.AgentProfile | undefined }) {
+function LaunchPickers({
+  profile,
+  appliesToNext,
+}: {
+  profile: api.AgentProfile | undefined;
+  appliesToNext: boolean;
+}) {
   const s = useWorkspace();
   const options = profile ? s.agents?.launch_options[profile.runtime_id] : undefined;
   const models = options?.models ?? [];
   const efforts = options?.efforts ?? [];
+  const modes = options?.modes ?? [];
 
-  if (models.length === 0 && efforts.length === 0) return null;
+  if (models.length === 0 && efforts.length === 0 && modes.length === 0) return null;
 
-  const describe = (choices: api.LaunchChoice[], value: string) =>
-    choices.find((c) => c.value === value)?.note ?? undefined;
+  const scope = appliesToNext ? " Applies to the next Thread, not the one running." : "";
+  const describe = (choices: api.LaunchChoice[], value: string) => {
+    const note = choices.find((c) => c.value === value)?.note;
+    return `${note ?? ""}${note ? " " : ""}${scope}`.trim() || undefined;
+  };
 
   return (
     <>
@@ -581,7 +676,10 @@ function LaunchPickers({ profile }: { profile: api.AgentProfile | undefined }) {
           value={models.some((m) => m.value === s.activeModel) ? s.activeModel : ""}
           onChange={(e) => s.setActiveModel(e.target.value)}
           aria-label="Model"
-          title={describe(models, s.activeModel) ?? "Which model this Thread starts with"}
+          title={
+            describe(models, s.activeModel) ??
+            `Which model a Thread starts with.${scope}`
+          }
         >
           {models.map((m) => (
             <option key={m.value} value={m.value} title={m.note ?? undefined}>
@@ -596,7 +694,10 @@ function LaunchPickers({ profile }: { profile: api.AgentProfile | undefined }) {
           value={efforts.some((x) => x.value === s.activeEffort) ? s.activeEffort : ""}
           onChange={(e) => s.setActiveEffort(e.target.value)}
           aria-label="Effort"
-          title={describe(efforts, s.activeEffort) ?? "How much reasoning to spend"}
+          title={
+            describe(efforts, s.activeEffort) ??
+            `How much reasoning to spend.${scope}`
+          }
         >
           {efforts.map((x) => (
             <option key={x.value} value={x.value} title={x.note ?? undefined}>
@@ -605,7 +706,239 @@ function LaunchPickers({ profile }: { profile: api.AgentProfile | undefined }) {
           ))}
         </select>
       )}
+
+      {/* Plan mode is the reason this one has to be here rather than only on a
+          running session. An agent proposes a plan by calling `ExitPlanMode`, and
+          it only does that when it started in plan mode — so a Thread launched in
+          `auto` can never produce one, and the Plan surface stays empty forever
+          however patiently you wait for it. */}
+      {modes.length > 0 && (
+        <select
+          value={modes.some((m) => m.value === s.activeMode) ? s.activeMode : ""}
+          onChange={(e) => s.setActiveMode(e.target.value)}
+          aria-label="Start mode"
+          title={describe(modes, s.activeMode) ?? `Which mode a Thread starts in.${scope}`}
+        >
+          <option value="">Start mode: default</option>
+          {modes.map((m) => (
+            <option key={m.value} value={m.value} title={m.note ?? undefined}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {/* Said plainly, not only in a tooltip: the pickers are visible beside a
+          running Thread they do not govern, and that has to be unambiguous. */}
+      {appliesToNext && (
+        <span className="chip" title="These apply when the next Thread starts">
+          next Thread
+        </span>
+      )}
     </>
+  );
+}
+
+/**
+ * Where the next Thread will start, and the control for changing it.
+ *
+ * Unpinned it follows the focused pane, so moving around the terminal moves the
+ * agent you are about to start — the common case, needing no interaction. Pinned
+ * it stays put, for starting a Thread somewhere other than where you are standing,
+ * which the pane's directory alone cannot express.
+ *
+ * Changing it is a typed path with completion, not a file dialog. This is a
+ * terminal: the muscle memory is `cd`, the paths are already indexed, and a modal
+ * OS chooser to pick a directory you could have typed in four keystrokes is the
+ * wrong idiom in an application whose whole argument is that the keyboard is
+ * faster. `~` expands, and the completion is directories only, for the same reason
+ * `cd` completion is.
+ *
+ * The state is visible either way. A directory that silently follows something
+ * else is fine; one that does so without saying is how an agent ends up working in
+ * the wrong repository.
+ */
+function NextThreadCwd({ path, pinned }: { path: string; pinned: boolean }) {
+  const s = useWorkspace();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(path);
+  const [matches, setMatches] = useState<api.Completion[]>([]);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (editing) requestAnimationFrame(() => inputRef.current?.select());
+  }, [editing]);
+
+  // Directories only, debounced for the same reason the composer's is: this is
+  // about IPC volume rather than filesystem cost.
+  useEffect(() => {
+    if (!editing) return;
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      void api
+        .pathComplete(draft, "dirs", null, 6)
+        .then((next) => {
+          if (!cancelled) setMatches(next);
+        })
+        .catch(() => {
+          if (!cancelled) setMatches([]);
+        });
+    }, 60);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft, editing]);
+
+  function commit(value: string) {
+    const trimmed = value.trim();
+    setEditing(false);
+    setMatches([]);
+    // Empty means "stop pinning", which is the same thing the unpin button does
+    // and the obvious meaning of clearing the box.
+    s.setActiveCwd(trimmed === "" ? null : trimmed);
+  }
+
+  if (!editing) {
+    return (
+      <span className="row" style={{ gap: "var(--sp-1)", minWidth: 0 }}>
+        <button
+          className="btn btn-xs mono truncate"
+          onClick={() => {
+            setDraft(path);
+            setEditing(true);
+          }}
+          title={`${path}\n${
+            pinned
+              ? "Pinned. The next Thread starts here."
+              : "Following the focused pane. Click to type a different directory."
+          }`}
+        >
+          {pinned ? "📌 " : ""}
+          {abbreviatePath(path)}
+        </button>
+        {pinned && (
+          <button
+            className="btn btn-xs"
+            onClick={() => s.setActiveCwd(null)}
+            title="Go back to following the focused pane"
+          >
+            unpin
+          </button>
+        )}
+      </span>
+    );
+  }
+
+  return (
+    <span className="col" style={{ gap: 2, minWidth: 0, position: "relative" }}>
+      <input
+        ref={inputRef}
+        className="mono"
+        value={draft}
+        aria-label="Directory for the next Thread"
+        spellCheck={false}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit(draft);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            // Abandons the edit rather than the pin: Escape undoes what you were
+            // typing, it does not change where the Thread runs.
+            setEditing(false);
+            setMatches([]);
+          } else if (e.key === "Tab" && matches[0]) {
+            // One candidate is the common case after typing a prefix, and Tab is
+            // what a terminal user's hands do.
+            e.preventDefault();
+            setDraft(matches[0].path);
+          }
+        }}
+        onBlur={() => commit(draft)}
+        style={{ width: "100%", minWidth: 220 }}
+      />
+      {matches.length > 0 && (
+        <span className="col" style={{ gap: 0 }}>
+          {matches.slice(0, 4).map((m) => (
+            <button
+              key={m.path}
+              className="btn btn-xs mono truncate"
+              style={{ justifyContent: "flex-start" }}
+              // `onMouseDown` rather than `onClick`: the input's blur fires first
+              // and would commit the half-typed draft before the click landed.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                commit(m.path);
+              }}
+            >
+              {m.path}
+            </button>
+          ))}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Shorten a path for a header without losing the part that identifies it.
+ *
+ * The home directory becomes `~`, and a long path keeps its last few segments
+ * rather than its first: `/Users/x/Projects/tervin/crates/tervin-app` truncated
+ * from the left reads as `/Users/x/Projects/…`, which is the half every path on
+ * the machine shares. The tail is what tells you which directory this is.
+ *
+ * The element carries the full path as a tooltip, so nothing is actually hidden.
+ */
+export function abbreviatePath(path: string): string {
+  const home = /^\/Users\/[^/]+/.exec(path) ?? /^\/home\/[^/]+/.exec(path);
+  const short = home ? `~${path.slice(home[0].length)}` : path;
+  if (short.length <= 44) return short;
+
+  const parts = short.split("/").filter(Boolean);
+  const tail = parts.slice(-3).join("/");
+  return `…/${tail}`;
+}
+
+/**
+ * The subagent currently working, and what it has spent.
+ *
+ * This line exists because its absence was read as a crash. A `Task` hands the
+ * work to a subagent that can run for minutes; the parent makes one tool call and
+ * then says nothing, so the Thread looks dead while it is busy. Everything here
+ * comes from the runtime's own progress reports, which Tervin previously discarded.
+ *
+ * The counts are the point. "Working" alone is indistinguishable from stuck; ten
+ * tools and 157k tokens is visibly progress.
+ */
+function SubagentLine({ progress }: { progress: Record<string, unknown> }) {
+  const kind = String(progress.subagent_type ?? "subagent");
+  const description = String(progress.description ?? "");
+  const tools = Number(progress.tool_uses ?? 0);
+  const tokens = Number(progress.total_tokens ?? 0);
+  const elapsed = Number(progress.elapsed_ms ?? 0);
+
+  const compactTokens =
+    tokens >= 1000 ? `${Math.round(tokens / 1000)}k tokens` : `${tokens} tokens`;
+  const seconds = Math.round(elapsed / 1000);
+
+  return (
+    <div className="meta row" style={{ gap: "var(--sp-2)", alignItems: "center" }}>
+      <span className="dot dot-teal" />
+      <span>
+        <strong>{kind}</strong> subagent
+      </span>
+      <span className="tabular">
+        {tools} {tools === 1 ? "tool" : "tools"} · {compactTokens} · {seconds}s
+      </span>
+      {description && (
+        <span className="truncate grow" title={description}>
+          {description}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -621,8 +954,8 @@ function LaunchPickers({ profile }: { profile: api.AgentProfile | undefined }) {
 function ModePicker({ thread }: { thread: ThreadView }) {
   const s = useWorkspace();
   const [busy, setBusy] = useState(false);
-  const modes = thread.info?.metadata.modes ?? [];
-  const current = thread.info?.metadata.permission_mode ?? thread.permissions?.mode ?? "";
+  const modes = thread.info?.metadata?.modes ?? [];
+  const current = thread.info?.metadata?.permission_mode ?? thread.permissions?.mode ?? "";
 
   if (modes.length === 0) return null;
 

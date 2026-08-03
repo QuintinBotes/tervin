@@ -15,12 +15,15 @@ you about what they are doing.
 
 <a id="status"></a>
 
-> ## ⚠️ In development, not released
+> ## ⚠️ In development
 >
-> **There is no release yet.** No version has been tagged, nothing is published to npm or
-> Homebrew, and the install commands below describe how distribution *will* work rather
-> than something you can run today. They are in the README because the pipeline that
-> performs them is written and reviewable, not because it has run.
+> **v0.1.0 is released, and not every route works.** The tag exists, the release carries a
+> signed-checksum manifest, and the Homebrew cask and formula are updated. The `curl`
+> installer and Homebrew both work today and have been run against the real release.
+>
+> **`npx tervin` does not work yet.** The package is not on the registry: the publish step
+> failed and the route stays documented because the pipeline is written and reviewable, not
+> because it has run. Use `curl` or Homebrew until this line says otherwise.
 >
 > **Nothing here has been used in anger.** The test suite is substantial and the awkward
 > paths are covered deliberately, but a test suite is not a user. Expect to find things
@@ -156,23 +159,20 @@ established fact), full command output, and anything not in the event stream, an
 
 ## Installing
 
-Either of these, whichever you already have:
-
 ```sh
 curl -fsSL https://raw.githubusercontent.com/QuintinBotes/tervin/main/packaging/install.sh | sh
 ```
 
-```sh
-npx tervin
-```
+Or `brew install --formula tervin`. `npx tervin` is written and reviewable but the package
+is not on the registry yet, so it is not offered here until it works.
 
-Both open with **no Gatekeeper dialog at all**, and that is not luck. Tervin is not signed
+These open with **no Gatekeeper dialog at all**, and that is not luck. Tervin is not signed
 with an Apple Developer ID, because that costs $99 a year and this is an open-source project.
 It turns out not to matter for most routes, for a reason worth understanding:
 
 macOS applies the `com.apple.quarantine` attribute in the **downloading application**, not in
 the kernel. A browser sets it. `curl` and Node do not. So the identical bytes fetched by the
-installer script or by `npx` carry only `com.apple.provenance` and launch normally, while the
+installer script carry only `com.apple.provenance` and launch normally, while the
 same file downloaded through a browser is quarantined and refuses to open on first launch.
 
 Verified rather than assumed: `xattr` on a `curl` download of a release asset shows
@@ -181,9 +181,10 @@ Verified rather than assumed: `xattr` on a `curl` download of a release asset sh
 Neither route ever strips quarantine on your behalf. Doing that is how people learn to wave
 away a warning that matters, and it is unnecessary here because nothing was quarantined.
 
-`npx tervin --install` copies it into `/Applications`; `--where` prints the cached
-bundle; `--clean` removes it. The installer script takes `--version`, `--prefix` and
-`--uninstall`, and never uses `sudo`.
+The installer script takes `--version`, `--prefix` and `--uninstall`, and never uses
+`sudo`. Once the npm package is published, `npx tervin --install` will copy the bundle
+into `/Applications`, `--where` will print the cached bundle, and `--clean` will remove
+it.
 
 ### Homebrew
 
@@ -216,7 +217,7 @@ Ordered best to worst:
 | Route | Gatekeeper prompt? | Notes |
 | --- | --- | --- |
 | `curl … install.sh \| sh` | **No** | Verifies the published checksum and refuses to install without it. Needs nothing but `curl`. |
-| `npx tervin` | **No** | Checksums are baked into the npm package. Needs Node 20+. |
+| `npx tervin` | — | **Not published yet.** Checksums are baked into the npm package, and it needs Node 20+, but the package is not on the registry so this command does not work today. |
 | `brew install --formula tervin` | **No** | Compiles locally. Needs a Rust and Node toolchain and a few minutes. |
 | Build from source | **No** | Same reason. |
 | `cargo install --git …` | **No** | Same reason. |

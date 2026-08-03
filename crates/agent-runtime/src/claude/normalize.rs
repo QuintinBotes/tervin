@@ -56,7 +56,23 @@ pub struct Normalizer {
     account_hint: Option<String>,
     /// Every hook run observed, for the Bridge panel.
     pub hook_runs: Vec<crate::runtime::HookRun>,
+    /// The subagent currently doing the work, if the parent handed off to one.
+    subagent: Option<SubagentRun>,
     seq: u64,
+}
+
+/// What is known about a running subagent, carried so its end can be reported.
+///
+/// The runtime announces a subagent's progress but never its completion; the only
+/// signal is the parent's `Task` tool returning. Holding the last progress report
+/// is what lets that return say how much the subagent actually did.
+#[derive(Debug, Clone)]
+struct SubagentRun {
+    tool_use_id: String,
+    subagent_type: String,
+    tool_uses: u64,
+    total_tokens: u64,
+    elapsed_ms: u64,
 }
 
 impl Normalizer {
@@ -84,8 +100,17 @@ impl Normalizer {
             raw_sink: Vec::new(),
             account_hint: None,
             hook_runs: Vec::new(),
+            subagent: None,
             seq: 0,
         }
+    }
+
+    /// Where the runtime says this Thread is working.
+    ///
+    /// Its own answer, from `init` and kept current, rather than the directory
+    /// Tervin asked for. Every path an agent touches is relative to this.
+    pub fn cwd(&self) -> &str {
+        &self.cwd
     }
 
     pub fn state(&self) -> ThreadState {
@@ -262,6 +287,70 @@ impl Normalizer {
             "hook_started" => {}
 
             "hook_response" => self.ingest_hook_response(value, out),
+
+            // A subagent reporting itself. Every field the timeline needs is already
+            // here — what it is, what it is doing, how much it has done — and all of
+            // it used to be discarded as unclassified, which is why a Thread running
+            // a subagent looked like a Thread that had stopped.
+            "task_progress" => {
+                let raw = self.stash_raw(value);
+                let text = |key: &str| {
+                    value
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string()
+                };
+                let usage = value.get("usage");
+                let num = |key: &str| {
+                    usage
+                        .and_then(|u| u.get(key))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                };
+
+                let tool_use_id = text("tool_use_id");
+                let subagent_type = {
+                    let t = text("subagent_type");
+                    if t.is_empty() {
+                        "subagent".to_string()
+                    } else {
+                        t
+                    }
+                };
+                let description = text("description");
+                let tool_uses = num("tool_uses");
+                let total_tokens = num("total_tokens");
+                let elapsed_ms = num("duration_ms");
+
+                self.subagent = Some(SubagentRun {
+                    tool_use_id: tool_use_id.clone(),
+                    subagent_type: subagent_type.clone(),
+                    tool_uses,
+                    total_tokens,
+                    elapsed_ms,
+                });
+
+                let summary = if description.is_empty() {
+                    format!("{subagent_type} · {tool_uses} tools")
+                } else {
+                    format!("{subagent_type} · {description}")
+                };
+                out.push(
+                    self.event(
+                        summary,
+                        EventPayload::SubagentProgress {
+                            tool_use_id,
+                            subagent_type,
+                            description,
+                            tool_uses,
+                            total_tokens,
+                            elapsed_ms,
+                        },
+                    )
+                    .with_raw(raw),
+                );
+            }
 
             "status" | "compact_boundary" => {
                 let raw = self.stash_raw(value);
@@ -503,7 +592,7 @@ impl Normalizer {
             .or_else(|| input.get("notebook_path"))
             .and_then(Value::as_str)
             .map(String::from);
-        let summary = summarise_tool_input(&name, &input);
+        let summary = summarise_tool_input(&name, &input, &self.cwd);
 
         self.pending_tools.insert(
             id.clone(),
@@ -573,7 +662,7 @@ impl Normalizer {
                 self.transition(ThreadState::Reading, out);
                 if let Some(p) = path {
                     out.push(self.event_with_links(
-                        format!("Read {}", short_path(&p)),
+                        format!("Read {}", short_path(&p, &self.cwd)),
                         EventPayload::FileRead {
                             path: p.clone(),
                             lines: input.get("limit").and_then(Value::as_u64).map(|n| n as u32),
@@ -599,7 +688,7 @@ impl Normalizer {
                         FileChangeKind::Modified
                     };
                     out.push(self.event_with_links(
-                        format!("Proposed change to {}", short_path(&p)),
+                        format!("Proposed change to {}", short_path(&p, &self.cwd)),
                         EventPayload::PatchProposed {
                             files: vec![FileChange {
                                 path: p.clone(),
@@ -717,6 +806,27 @@ impl Normalizer {
                     duration_ms,
                 },
             ));
+
+            // A subagent's `Task` returning is the only signal it has finished; the
+            // runtime reports progress but never completion. Said explicitly, with
+            // what it cost, so the Thread visibly becomes its parent's again rather
+            // than leaving a subagent that appears to still be running.
+            if self.subagent.as_ref().is_some_and(|s| s.tool_use_id == id) {
+                let run = self.subagent.take().expect("checked just above");
+                out.push(self.event(
+                    format!(
+                        "{} finished · {} tools · {} tokens",
+                        run.subagent_type, run.tool_uses, run.total_tokens
+                    ),
+                    EventPayload::SubagentFinished {
+                        tool_use_id: run.tool_use_id,
+                        subagent_type: run.subagent_type,
+                        tool_uses: run.tool_uses,
+                        total_tokens: run.total_tokens,
+                        elapsed_ms: run.elapsed_ms,
+                    },
+                ));
+            }
 
             match name.as_str() {
                 "Bash" | "BashOutput" => {
@@ -841,7 +951,7 @@ impl Normalizer {
                             FileChangeKind::Modified
                         };
                         out.push(self.event_with_links(
-                            format!("Changed {}", short_path(&p)),
+                            format!("Changed {}", short_path(&p, &self.cwd)),
                             EventPayload::PatchApplied {
                                 files: vec![FileChange {
                                     path: p.clone(),
@@ -910,7 +1020,7 @@ impl Normalizer {
                     .unwrap_or("tool");
                 let detail = denial
                     .get("tool_input")
-                    .map(|i| summarise_tool_input(tool, i))
+                    .map(|i| summarise_tool_input(tool, i, &self.cwd))
                     .unwrap_or_default();
                 self.denials.push(format!("{tool}: {detail}"));
                 out.push(self.event(
@@ -1176,14 +1286,19 @@ fn string_array(value: Option<&Value>) -> Vec<String> {
 /// A compact, human-readable rendering of a tool's arguments.
 ///
 /// Never a raw JSON dump in the common cases: a timeline row has to be scannable.
-pub fn summarise_tool_input(name: &str, input: &Value) -> String {
+/// A one-line rendering of a tool's arguments.
+///
+/// `cwd` is the Thread's working directory, so file paths read as they do inside
+/// the project. Pass an empty string where there is no directory to relate them
+/// to; the path is then shown in full, which is the honest fallback.
+pub fn summarise_tool_input(name: &str, input: &Value, cwd: &str) -> String {
     let s = |k: &str| input.get(k).and_then(Value::as_str);
 
     match name {
         "Bash" | "BashOutput" => s("command").map(|c| first_line(c, 160).to_string()),
-        "Read" | "Write" | "Edit" | "MultiEdit" | "NotebookEdit" | "NotebookRead" => {
-            s("file_path").or(s("notebook_path")).map(short_path)
-        }
+        "Read" | "Write" | "Edit" | "MultiEdit" | "NotebookEdit" | "NotebookRead" => s("file_path")
+            .or(s("notebook_path"))
+            .map(|p| short_path(p, cwd)),
         "Glob" => s("pattern").map(String::from),
         "Grep" => s("pattern").map(|p| format!("/{p}/")),
         "WebFetch" | "WebSearch" => s("url").or(s("query")).map(String::from),
@@ -1281,14 +1396,29 @@ fn truncate(text: &str, max: usize) -> String {
 }
 
 /// Shorten a path for display, keeping the last two components.
-fn short_path(path: impl AsRef<str>) -> String {
+/// A path as it reads inside the project, rather than its last two segments.
+///
+/// Taking the last two regardless of depth made one project look like several:
+/// a real session showed `src/inventory.py` beside `tervin-testbed/README.md`,
+/// which are a nested file and a root file in the same repository. The second is
+/// wearing the name of the directory that contains the whole project, so nothing
+/// about the pair says they are neighbours.
+///
+/// Relative to the Thread's working directory when the path is inside it, which is
+/// how anyone reading a diff or a stack trace expects to see it. Outside it, the
+/// path is left absolute — that is genuinely news, and shortening it would hide the
+/// one case worth noticing.
+fn short_path(path: impl AsRef<str>, cwd: &str) -> String {
     let path = path.as_ref();
-    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
-    match parts.len() {
-        0 => path.to_string(),
-        1 => parts[0].to_string(),
-        n => format!("{}/{}", parts[n - 2], parts[n - 1]),
+    if !cwd.is_empty() {
+        let base = cwd.trim_end_matches('/');
+        if let Some(rest) = path.strip_prefix(base).and_then(|r| r.strip_prefix('/')) {
+            if !rest.is_empty() {
+                return rest.to_string();
+            }
+        }
     }
+    path.to_string()
 }
 
 #[cfg(test)]
@@ -1835,6 +1965,157 @@ mod tests {
         assert!(n.denials.is_empty(), "the gate records its own denials");
     }
 
+    /// Shape copied from a real session, not invented.
+    fn task_progress(tools: u64, tokens: u64, description: &str) -> serde_json::Value {
+        serde_json::json!({
+            "type": "system", "subtype": "task_progress",
+            "description": description,
+            "last_tool_name": "Read",
+            "session_id": "9443933a-9e17-4bee-9255-59879e365cca",
+            "subagent_type": "Explore",
+            "task_id": "a91691aff493eeff9",
+            "tool_use_id": "toolu_01YCTLiAk7kgCRN5orFTFBAf",
+            "usage": {"duration_ms": 22979, "tool_uses": tools, "total_tokens": tokens},
+            "uuid": "e642c7f2-48b1-47af-a258-bedaca5ebf93"
+        })
+    }
+
+    #[test]
+    fn paths_read_as_they_do_inside_the_project() {
+        // The reported case, from a real session: `src/inventory.py` beside
+        // `tervin-testbed/README.md`. Both are in one repository — one nested, one
+        // at the root — and taking the last two segments regardless of depth made
+        // the root file wear the name of the directory holding the whole project,
+        // so nothing about the pair said they were neighbours.
+        let cwd = "/Users/dev/tervin-testbed";
+        assert_eq!(
+            short_path("/Users/dev/tervin-testbed/src/inventory.py", cwd),
+            "src/inventory.py"
+        );
+        assert_eq!(
+            short_path("/Users/dev/tervin-testbed/README.md", cwd),
+            "README.md"
+        );
+        assert_eq!(
+            short_path("/Users/dev/tervin-testbed/a/b/c/deep.rs", cwd),
+            "a/b/c/deep.rs",
+            "depth is not truncated: a relative path is already short, and cutting \
+             it loses the part that identifies the file"
+        );
+    }
+
+    #[test]
+    fn a_path_outside_the_project_stays_absolute() {
+        // Genuinely news. An agent reading outside the directory it was given is
+        // worth noticing, and abbreviating it would hide the one case that matters.
+        assert_eq!(short_path("/etc/hosts", "/Users/dev/proj"), "/etc/hosts");
+        // A directory that merely shares a prefix is not inside it.
+        assert_eq!(
+            short_path("/Users/dev/proj-other/x.rs", "/Users/dev/proj"),
+            "/Users/dev/proj-other/x.rs"
+        );
+    }
+
+    #[test]
+    fn a_working_subagent_is_reported_rather_than_discarded() {
+        // The case this exists for. A `Task` hands off to a subagent that can read
+        // twenty files over several minutes, and every one of those was thrown away
+        // as unclassified. The timeline showed the parent's single call and then
+        // nothing, so a Thread doing plenty of work read as a Thread that had died —
+        // which is how it was read, and nudged, and reported as stopped.
+        let mut n = normalizer();
+        let events = n.ingest(&task_progress(10, 157251, "Reading ThreadPanel.tsx"));
+
+        let progress = events
+            .iter()
+            .find(|e| e.kind() == "subagent.progress")
+            .expect("a subagent at work is news");
+        match &progress.payload {
+            EventPayload::SubagentProgress {
+                subagent_type,
+                description,
+                tool_uses,
+                total_tokens,
+                tool_use_id,
+                ..
+            } => {
+                assert_eq!(subagent_type, "Explore");
+                assert_eq!(description, "Reading ThreadPanel.tsx");
+                assert_eq!(*tool_uses, 10);
+                assert_eq!(*total_tokens, 157251);
+                // Carries its parent, so its work can be attributed rather than
+                // appearing to be the main agent's.
+                assert_eq!(tool_use_id, "toolu_01YCTLiAk7kgCRN5orFTFBAf");
+            }
+            other => panic!("got {other:?}"),
+        }
+        assert!(
+            !events.iter().any(|e| e.kind() == "runtime.unclassified"),
+            "a subagent is not an unclassified runtime message"
+        );
+    }
+
+    #[test]
+    fn a_subagent_is_reported_as_finished_when_its_task_returns() {
+        // The runtime announces a subagent's progress and never its completion. Left
+        // alone, the last thing the timeline says is that a subagent was working,
+        // which is indistinguishable from one still working an hour later.
+        let mut n = normalizer();
+        n.ingest(&task_progress(10, 157251, "Reading ThreadPanel.tsx"));
+        n.ingest(&serde_json::json!({
+            "type": "assistant",
+            "message": {"content": [{
+                "type": "tool_use", "id": "toolu_01YCTLiAk7kgCRN5orFTFBAf",
+                "name": "Task", "input": {"description": "explore"}
+            }]}
+        }));
+
+        let events = n.ingest(&serde_json::json!({
+            "type": "user",
+            "message": {"content": [{
+                "type": "tool_result",
+                "tool_use_id": "toolu_01YCTLiAk7kgCRN5orFTFBAf",
+                "content": "done"
+            }]}
+        }));
+
+        let finished = events
+            .iter()
+            .find(|e| e.kind() == "subagent.finished")
+            .expect("the subagent's end must be reported");
+        match &finished.payload {
+            EventPayload::SubagentFinished {
+                subagent_type,
+                tool_uses,
+                total_tokens,
+                ..
+            } => {
+                assert_eq!(subagent_type, "Explore");
+                // Carried from the last progress report, because the completion
+                // itself says nothing about what the subagent actually did.
+                assert_eq!(*tool_uses, 10);
+                assert_eq!(*total_tokens, 157251);
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_unrelated_tool_completing_does_not_end_the_subagent() {
+        // A subagent runs while the parent is idle, but the parent's own earlier
+        // tools can still be settling. Only the `Task` it belongs to ends it.
+        let mut n = normalizer();
+        n.ingest(&task_progress(3, 900, "Reading store.ts"));
+        let events = n.ingest(&serde_json::json!({
+            "type": "user",
+            "message": {"content": [{
+                "type": "tool_result", "tool_use_id": "toolu_somethingelse",
+                "content": "ok"
+            }]}
+        }));
+        assert!(!events.iter().any(|e| e.kind() == "subagent.finished"));
+    }
+
     #[test]
     fn a_gate_that_failed_is_still_recognised_as_tervins_own() {
         // The case that was wrong. When the gate blocks, the runtime echoes its command
@@ -1961,20 +2242,27 @@ mod tests {
     #[test]
     fn tool_summaries_are_readable_not_json_dumps() {
         assert_eq!(
-            summarise_tool_input("Bash", &serde_json::json!({"command": "ls -la"})),
+            summarise_tool_input("Bash", &serde_json::json!({"command": "ls -la"}), ""),
             "ls -la"
         );
         assert_eq!(
-            summarise_tool_input("Read", &serde_json::json!({"file_path": "/a/b/c/d.rs"})),
+            summarise_tool_input(
+                "Read",
+                &serde_json::json!({"file_path": "/a/b/c/d.rs"}),
+                "/a/b"
+            ),
             "c/d.rs"
         );
         assert_eq!(
-            summarise_tool_input("Grep", &serde_json::json!({"pattern": "TODO"})),
+            summarise_tool_input("Grep", &serde_json::json!({"pattern": "TODO"}), ""),
             "/TODO/"
         );
         // An unknown tool still yields something bounded.
-        let unknown =
-            summarise_tool_input("mcp__thing__do", &serde_json::json!({"a": "x".repeat(500)}));
+        let unknown = summarise_tool_input(
+            "mcp__thing__do",
+            &serde_json::json!({"a": "x".repeat(500)}),
+            "",
+        );
         assert!(unknown.chars().count() <= 161);
     }
 
