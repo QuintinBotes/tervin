@@ -16,7 +16,7 @@
  */
 
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import * as api from "../lib/api";
 import { DEFAULT_APPEARANCE, useWorkspace, type ThreadView } from "../lib/store";
 import { BlocksPanel } from "./BlocksPanel";
@@ -159,6 +159,49 @@ describe("the Thread's working directory", () => {
     expect(getByRole("button", { name: /other/ }).title).toContain("Pinned");
     // And a way back, or pinning would be a one-way door.
     expect(getByText("unpin")).toBeTruthy();
+  });
+
+  it("is changed by typing a path, not by an OS file dialog", async () => {
+    // This is a terminal. The muscle memory is `cd`, the paths are already
+    // indexed, and a modal chooser for a directory you could type in four
+    // keystrokes is the wrong idiom in an app whose argument is that the keyboard
+    // is faster.
+    vi.spyOn(api, "pathComplete").mockResolvedValue([]);
+    useWorkspace.setState({
+      activeThreadId: null,
+      activeCwd: null,
+      environment: { project_root: "/Users/dev/Projects/tervin" } as unknown as api.ShellEnvironment,
+    });
+    const { getByRole, findByLabelText } = render(<ThreadPanel />);
+
+    getByRole("button", { name: /tervin/ }).click();
+    const input = (await findByLabelText("Directory for the next Thread")) as HTMLInputElement;
+
+    // `fireEvent` rather than assigning `value`: React tracks the previous value
+    // on the node and ignores a raw assignment, so the state never updates.
+    fireEvent.change(input, { target: { value: "/Users/dev/Projects/other" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(useWorkspace.getState().activeCwd).toBe("/Users/dev/Projects/other");
+  });
+
+  it("treats an emptied box as going back to following the pane", async () => {
+    // The obvious meaning of clearing it, and the same thing unpin does. Leaving a
+    // Thread pinned to "" would point an agent at nothing.
+    vi.spyOn(api, "pathComplete").mockResolvedValue([]);
+    useWorkspace.setState({
+      activeThreadId: null,
+      activeCwd: "/Users/dev/Projects/other",
+      environment: { project_root: "/Users/dev/Projects/tervin" } as unknown as api.ShellEnvironment,
+    });
+    const { getByRole, findByLabelText } = render(<ThreadPanel />);
+
+    getByRole("button", { name: /other/ }).click();
+    const input = (await findByLabelText("Directory for the next Thread")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(useWorkspace.getState().activeCwd).toBeNull();
   });
 
   it("follows the focused pane rather than the project root", () => {
