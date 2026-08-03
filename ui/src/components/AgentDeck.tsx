@@ -14,17 +14,45 @@ export function AgentDeck() {
   const s = useWorkspace();
   const threads = Object.values(s.threads).sort((a, b) => rank(a.state) - rank(b.state));
 
+  /**
+   * Starting a Thread was previously implicit: type into the composer while
+   * nothing is running, and the Send button quietly reads "Start Thread" instead.
+   * That is undiscoverable, and worse, unreachable — with a Thread selected and
+   * running there was no way back to "none", so a second Thread could not be
+   * started at all while the first was working.
+   */
+  const newThread = (
+    <div className="row" style={{ padding: "var(--sp-2) var(--sp-3)", gap: "var(--sp-2)" }}>
+      <button
+        className="btn btn-xs"
+        onClick={() => {
+          s.startNewThread();
+          s.setInspectorTab("thread");
+        }}
+        title="Start a Thread, leaving any running one to carry on (⌘⇧I)"
+      >
+        New Thread
+      </button>
+      <div className="grow" />
+      {s.activeThreadId === null && <span className="meta">composer is ready</span>}
+    </div>
+  );
+
   if (threads.length === 0) {
     return (
-      <div className="empty">
-        No agent Threads yet. When several are running, this shows each one's
-        purpose, state, current action, and whether it needs you.
+      <div className="col" style={{ minHeight: 0 }}>
+        {newThread}
+        <div className="empty">
+          No agent Threads yet. When several are running, this shows each one's
+          purpose, state, current action, and whether it needs you.
+        </div>
       </div>
     );
   }
 
   return (
     <div className="col" style={{ minHeight: 0 }}>
+      {newThread}
       {threads.map((t) => {
         const last = [...t.events].reverse().find((e) => e.payload.type !== "thread.state");
         const profile = s.agents?.profiles.find((p) => p.id === t.profileId);

@@ -257,6 +257,7 @@ interface WorkspaceState {
   /** Empty string means "whatever the profile already selects", not an empty flag. */
   activeModel: string;
   activeEffort: string;
+  activeMode: string;
 
   // threads
   threads: Record<string, ThreadView>;
@@ -376,6 +377,9 @@ interface WorkspaceActions {
   setActiveProfile: (id: string) => void;
   setActiveModel: (model: string) => void;
   setActiveEffort: (effort: string) => void;
+  setActiveMode: (mode: string) => void;
+  /** Clear the selection so the composer starts a Thread instead of continuing one. */
+  startNewThread: () => void;
 
   upsertThread: (thread: ThreadView) => void;
   appendThreadEvent: (event: api.TervinEvent) => void;
@@ -482,6 +486,7 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   agentsDiscovery: null,
   activeModel: "",
   activeEffort: "",
+  activeMode: "",
   activeProfileId: null,
 
   threads: {},
@@ -900,9 +905,16 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   // Switching profile can switch runtime, and the previous runtime's model alias
   // may mean nothing to the new one. Cleared rather than carried, so a stale
   // selection cannot be sent to a runtime that would reject or misread it.
-  setActiveProfile: (activeProfileId) => set({ activeProfileId, activeModel: "", activeEffort: "" }),
+  setActiveProfile: (activeProfileId) =>
+    set({ activeProfileId, activeModel: "", activeEffort: "", activeMode: "" }),
   setActiveModel: (activeModel) => set({ activeModel }),
   setActiveEffort: (activeEffort) => set({ activeEffort }),
+  setActiveMode: (activeMode) => set({ activeMode }),
+
+  // Deselecting is the whole mechanism: the composer starts a Thread when none is
+  // selected and continues one when it is. Without a way back to "none", a running
+  // Thread could not be left, so a second one could not be started at all.
+  startNewThread: () => set({ activeThreadId: null }),
 
   // ---------------------------------------------------------------- threads
 

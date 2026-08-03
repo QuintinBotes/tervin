@@ -190,7 +190,11 @@ describe("a running subagent", () => {
 });
 
 describe("the composer's launch pickers", () => {
-  function withRuntime(models: api.LaunchChoice[], efforts: api.LaunchChoice[]) {
+  function withRuntime(
+    models: api.LaunchChoice[],
+    efforts: api.LaunchChoice[],
+    modes: api.LaunchChoice[] = [],
+  ) {
     useWorkspace.setState({
       agents: {
         profiles: [
@@ -208,7 +212,7 @@ describe("the composer's launch pickers", () => {
           },
         ],
         default_profile: "p1",
-        launch_options: { "claude-code": { models, efforts } },
+        launch_options: { "claude-code": { models, efforts, modes } },
         profiles_path: "~/.config/tervin/agents.toml",
         mcp_path: "~/.config/tervin/mcp.json",
       },
@@ -278,6 +282,23 @@ describe("the composer's launch pickers", () => {
     const { getByLabelText, getByText } = render(<ThreadPanel />);
     expect(getByLabelText("Model")).toBeTruthy();
     expect(getByText("next Thread")).toBeTruthy();
+  });
+
+  it("offers a start mode, without which the Plan surface can never fill", () => {
+    // The whole reason a mode belongs at launch. An agent proposes a plan by
+    // calling `ExitPlanMode`, and it only does that when it started in plan mode.
+    // Tervin sent no mode at all, so every Thread ran in `auto`, no plan event was
+    // ever emitted, and the Plan tab sat empty no matter how long anyone waited.
+    withRuntime([], [], [
+      { value: "plan", label: "Plan", note: "Proposes a plan and writes nothing." },
+      { value: "auto", label: "Auto" },
+    ]);
+    const { getByLabelText } = render(<ThreadPanel />);
+
+    const mode = getByLabelText("Start mode") as HTMLSelectElement;
+    expect([...mode.options].map((o) => o.value)).toEqual(["", "plan", "auto"]);
+    // Defaults to unset, so nothing is imposed on a user who has not chosen.
+    expect(mode.value).toBe("");
   });
 
   it("does not preselect a value the runtime never offered", () => {

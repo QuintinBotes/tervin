@@ -1152,6 +1152,16 @@ function runAction(action: string, pane: string | null): boolean {
       return true;
     }
 
+    // Deselects rather than creating anything. A Thread exists once it is started
+    // with a prompt, so this puts the composer back into the state where sending
+    // starts one — and it works while another Thread is running, which was the
+    // part that had no route at all.
+    case "thread.new":
+      s.startNewThread();
+      s.setSurface("agents");
+      s.setInspectorTab("thread");
+      return true;
+
     case "palette.open":
       s.setPalette(true);
       return true;

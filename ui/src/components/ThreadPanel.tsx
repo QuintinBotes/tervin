@@ -212,6 +212,10 @@ export function ThreadPanel() {
           attachments,
           model: s.activeModel || null,
           effort: s.activeEffort || null,
+          // Only meaningful here. An agent proposes a plan by calling
+          // `ExitPlanMode`, which it does only when it started in plan mode, so a
+          // mode chosen after the fact cannot produce one.
+          permission_mode: s.activeMode || null,
           task_title: text.slice(0, 80),
         });
         s.clearAttachments();
@@ -610,8 +614,9 @@ function LaunchPickers({
   const options = profile ? s.agents?.launch_options[profile.runtime_id] : undefined;
   const models = options?.models ?? [];
   const efforts = options?.efforts ?? [];
+  const modes = options?.modes ?? [];
 
-  if (models.length === 0 && efforts.length === 0) return null;
+  if (models.length === 0 && efforts.length === 0 && modes.length === 0) return null;
 
   const scope = appliesToNext ? " Applies to the next Thread, not the one running." : "";
   const describe = (choices: api.LaunchChoice[], value: string) => {
@@ -652,6 +657,27 @@ function LaunchPickers({
           {efforts.map((x) => (
             <option key={x.value} value={x.value} title={x.note ?? undefined}>
               {x.label}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {/* Plan mode is the reason this one has to be here rather than only on a
+          running session. An agent proposes a plan by calling `ExitPlanMode`, and
+          it only does that when it started in plan mode — so a Thread launched in
+          `auto` can never produce one, and the Plan surface stays empty forever
+          however patiently you wait for it. */}
+      {modes.length > 0 && (
+        <select
+          value={modes.some((m) => m.value === s.activeMode) ? s.activeMode : ""}
+          onChange={(e) => s.setActiveMode(e.target.value)}
+          aria-label="Start mode"
+          title={describe(modes, s.activeMode) ?? `Which mode a Thread starts in.${scope}`}
+        >
+          <option value="">Start mode: default</option>
+          {modes.map((m) => (
+            <option key={m.value} value={m.value} title={m.note ?? undefined}>
+              {m.label}
             </option>
           ))}
         </select>
