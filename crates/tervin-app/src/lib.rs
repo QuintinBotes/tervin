@@ -92,6 +92,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::audit_recent,
             // agents
             commands::agents_overview,
+            commands::agents_discovery,
             commands::project_instructions,
             commands::agents_add_acp,
             commands::agents_add_local_model,

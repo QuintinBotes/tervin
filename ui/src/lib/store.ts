@@ -251,6 +251,8 @@ interface WorkspaceState {
   blocks: api.BlockSummary[];
   blockFilter: api.BlockFilter;
   agents: api.AgentsOverview | null;
+  /** Null until discovery answers, and stays null if it never does. */
+  agentsDiscovery: api.AgentsDiscovery | null;
   activeProfileId: string | null;
 
   // threads
@@ -472,6 +474,7 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   blocks: [],
   blockFilter: { limit: 200 },
   agents: null,
+  agentsDiscovery: null,
   activeProfileId: null,
 
   threads: {},
@@ -855,6 +858,10 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   },
 
   refreshAgents: async () => {
+    // Two calls, deliberately not one. What the user configured is read from disk and
+    // is on screen before anything is probed; what is installed takes a subprocess per
+    // agent and may be slow or fail. Fetched together, one failed probe took the
+    // profiles down with it and the user was told they had none.
     try {
       const agents = await api.agentsOverview();
       set((s) => ({
@@ -863,6 +870,14 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
           s.activeProfileId ?? agents.default_profile ?? agents.profiles[0]?.id ?? null,
       }));
     } catch (e) {
+      get().pushNotice(describeError(e));
+      return;
+    }
+
+    try {
+      set({ agentsDiscovery: await api.agentsDiscovery() });
+    } catch (e) {
+      // Said, not swallowed — but the profiles above stay exactly where they are.
       get().pushNotice(describeError(e));
     }
   },

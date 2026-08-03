@@ -515,6 +515,9 @@ function ShellSection() {
 function AgentsSection() {
   const s = useWorkspace();
   const agents = s.agents;
+  // Arrives after the profiles above, and may never arrive at all. Everything read
+  // from it therefore has to render sensibly while it is still null.
+  const discovery = s.agentsDiscovery;
 
   return (
     <div className="col" style={{ gap: "var(--sp-5)" }}>
@@ -565,12 +568,12 @@ function AgentsSection() {
         </div>
       </Field>
 
-      {(agents?.import_candidates.length ?? 0) > 0 && (
+      {(discovery?.import_candidates.length ?? 0) > 0 && (
         <Field
           label="Found on this machine"
           hint="Tervin read these from your shell aliases and config directories. Nothing is adopted automatically — adopting a profile decides which account an agent runs as."
         >
-          {agents!.import_candidates.map((c) => (
+          {discovery!.import_candidates.map((c) => (
             <div
               key={c.profile.id}
               className="row"
@@ -602,7 +605,14 @@ function AgentsSection() {
       <AddLocalModel />
 
       <Field label="Discovered runtimes" hint="Every agent Tervin recognises, whether or not it has a deep adapter.">
-        {(agents?.discovered ?? []).map((d) => (
+        {/* Said rather than shown as an empty list: "nothing installed" and "not
+            finished looking" are different answers, and only one of them is news. */}
+        {discovery === null && (
+          <div className="meta" style={{ padding: "var(--sp-2)" }}>
+            Looking for installed agents…
+          </div>
+        )}
+        {(discovery?.discovered ?? []).map((d) => (
           <div key={d.runtime_id} style={{ padding: "var(--sp-2)", borderBottom: "1px solid var(--tervin-line)" }}>
             <div className="row" style={{ gap: "var(--sp-2)" }}>
               <span className={`dot ${d.available ? "dot-green" : "dot-muted"}`} />

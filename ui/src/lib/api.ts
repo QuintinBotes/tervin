@@ -288,14 +288,25 @@ export interface ImportCandidate {
   source: string;
 }
 
+/**
+ * What the user configured. Read from disk, so it always arrives.
+ *
+ * Kept apart from {@link AgentsDiscovery} on purpose: probing the machine is slow and
+ * can fail, and when the two travelled together a failed probe meant a user with five
+ * configured profiles was told they had none.
+ */
 export interface AgentsOverview {
   profiles: AgentProfile[];
   default_profile: string | null;
-  discovered: Discovery[];
-  import_candidates: ImportCandidate[];
   /** Resolved paths, because they differ by platform. Never hard-code them. */
   profiles_path: string;
   mcp_path: string;
+}
+
+/** What Tervin found installed. Arrives later than {@link AgentsOverview}, or not at all. */
+export interface AgentsDiscovery {
+  discovered: Discovery[];
+  import_candidates: ImportCandidate[];
 }
 
 /** A kind of instruction file, named after the tool that established it. */
@@ -710,6 +721,7 @@ export const auditRecent = (limit: number) =>
 // ----------------------------------------------------------------- agents
 
 export const agentsOverview = () => invoke<AgentsOverview>("agents_overview");
+export const agentsDiscovery = () => invoke<AgentsDiscovery>("agents_discovery");
 
 /** Instruction files and MCP config other tools already wrote into this project. */
 export const projectInstructions = () =>
