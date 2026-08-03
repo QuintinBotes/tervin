@@ -158,6 +158,41 @@ describe("the composer's launch pickers", () => {
     expect(queryByLabelText("Effort")).toBeNull();
   });
 
+  it("stays reachable while a Thread is running, marked as the next one's", () => {
+    // The case that made this change. Hidden during a run, the only moment the
+    // model picker could not be reached was while watching a Thread use the wrong
+    // model — and the way out was to abandon the view. It now says what it governs
+    // instead of disappearing.
+    withRuntime(
+      [
+        { value: "", label: "Profile default" },
+        { value: "sonnet", label: "Sonnet" },
+      ],
+      [],
+    );
+    useWorkspace.setState({
+      activeThreadId: "thr_live",
+      threads: {
+        thr_live: {
+          id: "thr_live",
+          profileId: "p1",
+          runtimeId: "claude-code",
+          title: "a Thread already running",
+          state: "executing",
+          events: [],
+          capabilities: null,
+          permissions: null,
+          paneId: null,
+          info: { running: true } as unknown as api.ThreadInfo,
+        } as ThreadView,
+      },
+    });
+
+    const { getByLabelText, getByText } = render(<ThreadPanel />);
+    expect(getByLabelText("Model")).toBeTruthy();
+    expect(getByText("next Thread")).toBeTruthy();
+  });
+
   it("does not preselect a value the runtime never offered", () => {
     // Otherwise a selection carried over from another runtime renders as chosen
     // while the flag sent is something else entirely.
