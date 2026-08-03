@@ -102,6 +102,93 @@ beforeEach(() => {
   });
 });
 
+describe("a running subagent", () => {
+  function threadWith(events: unknown[]): ThreadView {
+    return {
+      id: "thr_sub",
+      profileId: "p1",
+      runtimeId: "claude-code",
+      title: "find the bug",
+      state: "understanding",
+      events: events as ThreadView["events"],
+      capabilities: null,
+      permissions: null,
+      paneId: null,
+      info: { running: true, metadata: { hook_runs: [] } } as unknown as api.ThreadInfo,
+    };
+  }
+
+  const progress = (over: Record<string, unknown> = {}) => ({
+    id: "e1",
+    thread_id: "thr_sub",
+    ts: new Date().toISOString(),
+    summary: "Explore · Reading ThreadPanel.tsx",
+    payload: {
+      type: "subagent.progress",
+      tool_use_id: "toolu_1",
+      subagent_type: "Explore",
+      description: "Reading ThreadPanel.tsx",
+      tool_uses: 10,
+      total_tokens: 157251,
+      elapsed_ms: 22979,
+      ...over,
+    },
+  });
+
+  it("says what it is and what it has spent, so quiet is not mistaken for dead", () => {
+    // The report that prompted this: twenty file reads by an Explore subagent,
+    // none of them attributed, and a Thread that looked stopped while working.
+    useWorkspace.setState({
+      activeThreadId: "thr_sub",
+      threads: { thr_sub: threadWith([progress()]) },
+    });
+    const { getByText } = render(<ThreadPanel />);
+
+    expect(getByText("Explore")).toBeTruthy();
+    expect(getByText(/10 tools/)).toBeTruthy();
+    // Rounded, because the exact token count is noise at a glance.
+    expect(getByText(/157k tokens/)).toBeTruthy();
+    expect(getByText("Reading ThreadPanel.tsx")).toBeTruthy();
+  });
+
+  it("stops showing one that has finished", () => {
+    useWorkspace.setState({
+      activeThreadId: "thr_sub",
+      threads: {
+        thr_sub: threadWith([
+          progress(),
+          {
+            id: "e2",
+            thread_id: "thr_sub",
+            ts: new Date().toISOString(),
+            summary: "Explore finished · 10 tools · 157251 tokens",
+            payload: { type: "subagent.finished", tool_use_id: "toolu_1", subagent_type: "Explore" },
+          },
+        ]),
+      },
+    });
+    const { queryByText } = render(<ThreadPanel />);
+    expect(queryByText("Reading ThreadPanel.tsx")).toBeNull();
+  });
+
+  it("keeps the newest report rather than the first", () => {
+    // Progress arrives per tool call. Showing the first would freeze the counts at
+    // one, which is its own way of looking stuck.
+    useWorkspace.setState({
+      activeThreadId: "thr_sub",
+      threads: {
+        thr_sub: threadWith([
+          progress({ tool_uses: 1, description: "Reading store.ts" }),
+          { ...progress({ tool_uses: 9, description: "Reading api.ts" }), id: "e2" },
+        ]),
+      },
+    });
+    const { getByText, queryByText } = render(<ThreadPanel />);
+    expect(getByText(/9 tools/)).toBeTruthy();
+    expect(queryByText("Reading store.ts")).toBeNull();
+  });
+});
+
 describe("the composer's launch pickers", () => {
   function withRuntime(models: api.LaunchChoice[], efforts: api.LaunchChoice[]) {
     useWorkspace.setState({

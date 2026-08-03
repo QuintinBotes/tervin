@@ -56,7 +56,23 @@ pub struct Normalizer {
     account_hint: Option<String>,
     /// Every hook run observed, for the Bridge panel.
     pub hook_runs: Vec<crate::runtime::HookRun>,
+    /// The subagent currently doing the work, if the parent handed off to one.
+    subagent: Option<SubagentRun>,
     seq: u64,
+}
+
+/// What is known about a running subagent, carried so its end can be reported.
+///
+/// The runtime announces a subagent's progress but never its completion; the only
+/// signal is the parent's `Task` tool returning. Holding the last progress report
+/// is what lets that return say how much the subagent actually did.
+#[derive(Debug, Clone)]
+struct SubagentRun {
+    tool_use_id: String,
+    subagent_type: String,
+    tool_uses: u64,
+    total_tokens: u64,
+    elapsed_ms: u64,
 }
 
 impl Normalizer {
@@ -84,6 +100,7 @@ impl Normalizer {
             raw_sink: Vec::new(),
             account_hint: None,
             hook_runs: Vec::new(),
+            subagent: None,
             seq: 0,
         }
     }
@@ -262,6 +279,70 @@ impl Normalizer {
             "hook_started" => {}
 
             "hook_response" => self.ingest_hook_response(value, out),
+
+            // A subagent reporting itself. Every field the timeline needs is already
+            // here — what it is, what it is doing, how much it has done — and all of
+            // it used to be discarded as unclassified, which is why a Thread running
+            // a subagent looked like a Thread that had stopped.
+            "task_progress" => {
+                let raw = self.stash_raw(value);
+                let text = |key: &str| {
+                    value
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string()
+                };
+                let usage = value.get("usage");
+                let num = |key: &str| {
+                    usage
+                        .and_then(|u| u.get(key))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                };
+
+                let tool_use_id = text("tool_use_id");
+                let subagent_type = {
+                    let t = text("subagent_type");
+                    if t.is_empty() {
+                        "subagent".to_string()
+                    } else {
+                        t
+                    }
+                };
+                let description = text("description");
+                let tool_uses = num("tool_uses");
+                let total_tokens = num("total_tokens");
+                let elapsed_ms = num("duration_ms");
+
+                self.subagent = Some(SubagentRun {
+                    tool_use_id: tool_use_id.clone(),
+                    subagent_type: subagent_type.clone(),
+                    tool_uses,
+                    total_tokens,
+                    elapsed_ms,
+                });
+
+                let summary = if description.is_empty() {
+                    format!("{subagent_type} · {tool_uses} tools")
+                } else {
+                    format!("{subagent_type} · {description}")
+                };
+                out.push(
+                    self.event(
+                        summary,
+                        EventPayload::SubagentProgress {
+                            tool_use_id,
+                            subagent_type,
+                            description,
+                            tool_uses,
+                            total_tokens,
+                            elapsed_ms,
+                        },
+                    )
+                    .with_raw(raw),
+                );
+            }
 
             "status" | "compact_boundary" => {
                 let raw = self.stash_raw(value);
@@ -717,6 +798,27 @@ impl Normalizer {
                     duration_ms,
                 },
             ));
+
+            // A subagent's `Task` returning is the only signal it has finished; the
+            // runtime reports progress but never completion. Said explicitly, with
+            // what it cost, so the Thread visibly becomes its parent's again rather
+            // than leaving a subagent that appears to still be running.
+            if self.subagent.as_ref().is_some_and(|s| s.tool_use_id == id) {
+                let run = self.subagent.take().expect("checked just above");
+                out.push(self.event(
+                    format!(
+                        "{} finished · {} tools · {} tokens",
+                        run.subagent_type, run.tool_uses, run.total_tokens
+                    ),
+                    EventPayload::SubagentFinished {
+                        tool_use_id: run.tool_use_id,
+                        subagent_type: run.subagent_type,
+                        tool_uses: run.tool_uses,
+                        total_tokens: run.total_tokens,
+                        elapsed_ms: run.elapsed_ms,
+                    },
+                ));
+            }
 
             match name.as_str() {
                 "Bash" | "BashOutput" => {
@@ -1833,6 +1935,121 @@ mod tests {
         assert_eq!(n.hook_runs.len(), 1);
         assert!(n.hook_runs[0].is_tervin);
         assert!(n.denials.is_empty(), "the gate records its own denials");
+    }
+
+    /// Shape copied from a real session, not invented.
+    fn task_progress(tools: u64, tokens: u64, description: &str) -> serde_json::Value {
+        serde_json::json!({
+            "type": "system", "subtype": "task_progress",
+            "description": description,
+            "last_tool_name": "Read",
+            "session_id": "9443933a-9e17-4bee-9255-59879e365cca",
+            "subagent_type": "Explore",
+            "task_id": "a91691aff493eeff9",
+            "tool_use_id": "toolu_01YCTLiAk7kgCRN5orFTFBAf",
+            "usage": {"duration_ms": 22979, "tool_uses": tools, "total_tokens": tokens},
+            "uuid": "e642c7f2-48b1-47af-a258-bedaca5ebf93"
+        })
+    }
+
+    #[test]
+    fn a_working_subagent_is_reported_rather_than_discarded() {
+        // The case this exists for. A `Task` hands off to a subagent that can read
+        // twenty files over several minutes, and every one of those was thrown away
+        // as unclassified. The timeline showed the parent's single call and then
+        // nothing, so a Thread doing plenty of work read as a Thread that had died —
+        // which is how it was read, and nudged, and reported as stopped.
+        let mut n = normalizer();
+        let events = n.ingest(&task_progress(10, 157251, "Reading ThreadPanel.tsx"));
+
+        let progress = events
+            .iter()
+            .find(|e| e.kind() == "subagent.progress")
+            .expect("a subagent at work is news");
+        match &progress.payload {
+            EventPayload::SubagentProgress {
+                subagent_type,
+                description,
+                tool_uses,
+                total_tokens,
+                tool_use_id,
+                ..
+            } => {
+                assert_eq!(subagent_type, "Explore");
+                assert_eq!(description, "Reading ThreadPanel.tsx");
+                assert_eq!(*tool_uses, 10);
+                assert_eq!(*total_tokens, 157251);
+                // Carries its parent, so its work can be attributed rather than
+                // appearing to be the main agent's.
+                assert_eq!(tool_use_id, "toolu_01YCTLiAk7kgCRN5orFTFBAf");
+            }
+            other => panic!("got {other:?}"),
+        }
+        assert!(
+            !events.iter().any(|e| e.kind() == "runtime.unclassified"),
+            "a subagent is not an unclassified runtime message"
+        );
+    }
+
+    #[test]
+    fn a_subagent_is_reported_as_finished_when_its_task_returns() {
+        // The runtime announces a subagent's progress and never its completion. Left
+        // alone, the last thing the timeline says is that a subagent was working,
+        // which is indistinguishable from one still working an hour later.
+        let mut n = normalizer();
+        n.ingest(&task_progress(10, 157251, "Reading ThreadPanel.tsx"));
+        n.ingest(&serde_json::json!({
+            "type": "assistant",
+            "message": {"content": [{
+                "type": "tool_use", "id": "toolu_01YCTLiAk7kgCRN5orFTFBAf",
+                "name": "Task", "input": {"description": "explore"}
+            }]}
+        }));
+
+        let events = n.ingest(&serde_json::json!({
+            "type": "user",
+            "message": {"content": [{
+                "type": "tool_result",
+                "tool_use_id": "toolu_01YCTLiAk7kgCRN5orFTFBAf",
+                "content": "done"
+            }]}
+        }));
+
+        let finished = events
+            .iter()
+            .find(|e| e.kind() == "subagent.finished")
+            .expect("the subagent's end must be reported");
+        match &finished.payload {
+            EventPayload::SubagentFinished {
+                subagent_type,
+                tool_uses,
+                total_tokens,
+                ..
+            } => {
+                assert_eq!(subagent_type, "Explore");
+                // Carried from the last progress report, because the completion
+                // itself says nothing about what the subagent actually did.
+                assert_eq!(*tool_uses, 10);
+                assert_eq!(*total_tokens, 157251);
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_unrelated_tool_completing_does_not_end_the_subagent() {
+        // A subagent runs while the parent is idle, but the parent's own earlier
+        // tools can still be settling. Only the `Task` it belongs to ends it.
+        let mut n = normalizer();
+        n.ingest(&task_progress(3, 900, "Reading store.ts"));
+        let events = n.ingest(&serde_json::json!({
+            "type": "user",
+            "message": {"content": [{
+                "type": "tool_result", "tool_use_id": "toolu_somethingelse",
+                "content": "ok"
+            }]}
+        }));
+        assert!(!events.iter().any(|e| e.kind() == "subagent.finished"));
     }
 
     #[test]

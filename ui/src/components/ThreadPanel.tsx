@@ -135,10 +135,31 @@ export function ThreadPanel() {
     });
   }, [s.pendingHandoff, s]);
 
+  /**
+   * The subagent currently doing the work, if there is one.
+   *
+   * Folded into a single live line rather than one row per report: a subagent
+   * emits progress on every tool call, so rendering each would bury the parent's
+   * own timeline under a subagent's file reads. The finish stays a real row, since
+   * that is a milestone rather than a heartbeat.
+   */
+  const activeSubagent = useMemo(() => {
+    if (!thread) return null;
+    let current: Record<string, unknown> | null = null;
+    for (const e of thread.events) {
+      if (e.payload.type === "subagent.progress") current = e.payload;
+      if (e.payload.type === "subagent.finished") current = null;
+    }
+    return current;
+  }, [thread]);
+
   const visible = useMemo(() => {
     if (!thread) return [];
     return thread.events.filter((e) => {
       if (e.payload.type === "runtime.unclassified") return false;
+      // Shown live above the composer instead, so a heartbeat does not become a
+      // timeline of its own.
+      if (e.payload.type === "subagent.progress") return false;
       if (!showReasoning && e.payload.type === "agent.message" && e.payload.is_reasoning)
         return false;
       if (e.payload.type === "thread.state") return false;
@@ -275,8 +296,12 @@ export function ThreadPanel() {
         )}
       </div>
 
-      {/* Capability and permission disclosure. */}
-      {thread && (caps || perms) && (
+      {/* Capability and permission disclosure, plus whatever is working right now.
+          A running subagent counts on its own: capabilities and permissions arrive
+          when the session reports them, and gating this strip on them would hide a
+          working subagent during exactly the early, quiet stretch that reads as a
+          dead Thread. */}
+      {thread && (caps || perms || activeSubagent) && (
         <div
           style={{
             borderTop: "1px solid var(--tervin-line)",
@@ -298,6 +323,7 @@ export function ThreadPanel() {
             </div>
           )}
           {caps && <CapabilityStrip caps={caps} />}
+          {activeSubagent && <SubagentLine progress={activeSubagent} />}
           <HookRuns runs={thread.info?.metadata?.hook_runs ?? []} />
         </div>
       )}
@@ -639,6 +665,46 @@ function LaunchPickers({
         </span>
       )}
     </>
+  );
+}
+
+/**
+ * The subagent currently working, and what it has spent.
+ *
+ * This line exists because its absence was read as a crash. A `Task` hands the
+ * work to a subagent that can run for minutes; the parent makes one tool call and
+ * then says nothing, so the Thread looks dead while it is busy. Everything here
+ * comes from the runtime's own progress reports, which Tervin previously discarded.
+ *
+ * The counts are the point. "Working" alone is indistinguishable from stuck; ten
+ * tools and 157k tokens is visibly progress.
+ */
+function SubagentLine({ progress }: { progress: Record<string, unknown> }) {
+  const kind = String(progress.subagent_type ?? "subagent");
+  const description = String(progress.description ?? "");
+  const tools = Number(progress.tool_uses ?? 0);
+  const tokens = Number(progress.total_tokens ?? 0);
+  const elapsed = Number(progress.elapsed_ms ?? 0);
+
+  const compactTokens =
+    tokens >= 1000 ? `${Math.round(tokens / 1000)}k tokens` : `${tokens} tokens`;
+  const seconds = Math.round(elapsed / 1000);
+
+  return (
+    <div className="meta row" style={{ gap: "var(--sp-2)", alignItems: "center" }}>
+      <span className="dot dot-teal" />
+      <span>
+        <strong>{kind}</strong> subagent
+      </span>
+      <span className="tabular">
+        {tools} {tools === 1 ? "tool" : "tools"} · {compactTokens} · {seconds}s
+      </span>
+      {description && (
+        <span className="truncate grow" title={description}>
+          {description}
+        </span>
+      )}
+    </div>
   );
 }
 
