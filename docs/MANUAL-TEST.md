@@ -109,7 +109,7 @@ This is where a recent bug lived, so check it deliberately.
 
 ## 7. Model and effort
 
-New in #34. Both are launch flags, so they apply to a Thread that has not started.
+Both are launch flags, so they apply to the next Thread rather than a running one.
 
 - [ ] The composer offers a model picker and an effort picker.
 - [ ] Model options are aliases — Opus, Sonnet, Fable, Haiku — plus a default.
@@ -123,7 +123,9 @@ New in #34. Both are launch flags, so they apply to a Thread that has not starte
       warns and silently falls back, so the point is that the list is right.
 - [ ] Switch profile: both selections reset, because a different runtime may not
       accept them.
-- [ ] Neither picker appears once a Thread is running.
+- [ ] Both pickers stay visible while a Thread runs, marked "next Thread". They
+      were once hidden then, which meant the only moment you could not reach the
+      model picker was while watching a Thread use the wrong model.
 
 ## 7b. Starting a Thread, and where it runs
 
