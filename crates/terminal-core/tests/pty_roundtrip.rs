@@ -87,6 +87,22 @@ fn run(program: &str, args: &[&str], input: &[&str], done: impl Fn(&str) -> bool
     collected
 }
 
+/// Write a word so the terminal's echo of it cannot pass for the shell's output.
+///
+/// A PTY echoes what is typed. A test that types `echo FOO` and then waits for
+/// `FOO` is therefore satisfied by its own echo, before the shell has run at all,
+/// and every assertion after it is reading the input back. Splitting the word with
+/// an empty quote leaves the echo reading `F''OO` while the shell still prints
+/// `FOO`, so only real output can match.
+///
+/// This is not hypothetical. Every marker in this file was written the plain way,
+/// which is why the burst test stopped collecting after 81 bytes and then reported
+/// the missing lines as though the pump had dropped them.
+fn only_in_output(word: &str) -> String {
+    let (head, tail) = word.split_at(1);
+    format!("{head}''{tail}")
+}
+
 /// Strip escape sequences so assertions match what a user would read.
 fn plain(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -135,7 +151,8 @@ fn a_real_shell_receives_input_and_returns_output() {
     // The input path: keystrokes written to the PTY must reach the shell and its
     // output must come back through the pump. A screenshot of a prompt proves
     // only the output half.
-    let collected = run("/bin/sh", &[], &["echo tervin-roundtrip-ok\n"], |text| {
+    let line = format!("echo {}\n", only_in_output("tervin-roundtrip-ok"));
+    let collected = run("/bin/sh", &[], &[&line], |text| {
         text.contains("tervin-roundtrip-ok")
     });
     let text = plain(&collected.text);
@@ -148,12 +165,12 @@ fn a_real_shell_receives_input_and_returns_output() {
 #[test]
 fn output_arrives_in_order_across_several_commands() {
     // The coalescer batches reads; batching must never reorder them.
-    let collected = run(
-        "/bin/sh",
-        &[],
-        &["echo one\n", "echo two\n", "echo three\n"],
-        |text| text.contains("three"),
-    );
+    let lines: Vec<String> = ["one", "two", "three"]
+        .iter()
+        .map(|w| format!("echo {}\n", only_in_output(w)))
+        .collect();
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let collected = run("/bin/sh", &[], &refs, |text| text.contains("three"));
     let text = plain(&collected.text);
     let one = text.find("one");
     let two = text.find("two");
@@ -172,12 +189,13 @@ fn output_arrives_in_order_across_several_commands() {
 fn a_large_burst_of_output_arrives_intact() {
     // The pump flushes early at a size threshold; nothing may be dropped at the
     // boundary. 5000 lines crosses it many times over.
-    let collected = run(
-        "/bin/sh",
-        &[],
-        &["i=0; while [ $i -lt 5000 ]; do echo line-$i; i=$((i+1)); done; echo BURST-DONE\n"],
-        |text| text.contains("BURST-DONE"),
+    let script = format!(
+        "i=0; while [ $i -lt 5000 ]; do echo line-$i; i=$((i+1)); done; echo {}\n",
+        only_in_output("BURST-DONE"),
     );
+    let collected = run("/bin/sh", &[], &[&script], |text| {
+        text.contains("BURST-DONE")
+    });
     let text = plain(&collected.text);
     assert!(text.contains("BURST-DONE"), "burst never completed");
     for probe in ["line-0", "line-2500", "line-4999"] {
@@ -192,14 +210,17 @@ fn a_large_burst_of_output_arrives_intact() {
 fn shell_integration_markers_survive_the_round_trip() {
     // Emitted by the shell, extracted by the tap, delivered on the chunk. If this
     // breaks, Blocks silently stop forming.
-    let script = concat!(
-        r#"printf '\033]7373;cmd=ZWNobyBoaQ==\007';"#,
-        r#"printf '\033]133;C\007';"#,
-        "echo hi;",
-        r#"printf '\033]133;D;0\007';"#,
-        "echo MARKERS-DONE\n",
+    let script = format!(
+        concat!(
+            r#"printf '\033]7373;cmd=ZWNobyBoaQ==\007';"#,
+            r#"printf '\033]133;C\007';"#,
+            "echo hi;",
+            r#"printf '\033]133;D;0\007';"#,
+            "echo {}\n",
+        ),
+        only_in_output("MARKERS-DONE"),
     );
-    let collected = run("/bin/sh", &[], &[script], |text| {
+    let collected = run("/bin/sh", &[], &[&script], |text| {
         text.contains("MARKERS-DONE")
     });
 

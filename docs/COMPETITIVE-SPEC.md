@@ -36,7 +36,7 @@ the transcript they already write. Commands an agent runs become Blocks.
 reason on every absence. `exit_code_reported` so a derived exit status is never shown as a
 measured one. Tervin never answers `allow` on a runtime's behalf.
 
-**Not present, and worth saying:** no Linux or Windows build, no signing (§5, a decision
+**Not present, and worth saying:** no Linux build (in CI; not yet claimed), no signing (§5, a decision
 rather than a gap), no kitty keyboard
 or graphics protocol, no scripting API, no plugin system, no team or sync features, no
 instant replay, no broadcast input, no vi-mode scrollback, no tmux control mode, no CLI flag
@@ -57,7 +57,7 @@ specific matters more than being reassuring.
 | --- | --- | --- |
 | **Cloud agents (Oz)** | Event-triggered autonomous agents in containers, reacting to webhooks, CI, cron and Slack. 20 to 40 concurrent depending on tier. | **Close it, differently.** See §4. |
 | **Warp Drive** | Team-synced storage of workflows, notebooks, environment profiles and MCP server lists. | **Close the local half, refuse the cloud half.** See §4.4. |
-| **Cross-platform** | GA on macOS, Linux (X11 and Wayland) and Windows, including ARM64. | **Close it.** §3.1. |
+| **Cross-platform** | GA on macOS, Linux (X11 and Wayland) and Windows, including ARM64. | **Linux: close it.** §3.1. **Windows: deferred.** §6. |
 | **CLI flag completion** | Subcommand and flag completion for hundreds of CLIs, no plugin needed. | **Close it.** §3.2. |
 | **Blocks over SSH** | Shell integration, blocks and AI survive an SSH hop and subshells (`nvm`, venv, `docker exec`, `kubectl exec`). | **Close it.** §3.3. |
 | **Notebook blocks** | A command, its output and prose, shared as a link with execution context. | Partly. §4.4. |
@@ -222,14 +222,13 @@ it. **§4.2: small work, real interoperability.**
 
 Ordered by value per unit of work, not by section number.
 
-### 3.1 Linux and Windows builds
+### 3.1 Linux build
 `P1.` The code is Unix-general already and the PTY layer has no macOS-specific assumptions;
-the honest blocker is that nothing has been *run* there. Add both to CI first, fix what
-breaks, and only then claim support. Windows needs ConPTY behind the `portable-pty`
-abstraction and a decision about shell integration, which has no equivalent to `ZDOTDIR`.
+the honest blocker is that nothing has been *run* there. Add Linux to CI first, fix what
+breaks, and only then claim support.
 
-*Exit criteria:* CI green on all three, and the README's platform claim changes only after a
-human has actually used each for a day.
+*Exit criteria:* CI green on both, and the README's platform claim changes only after a
+human has actually used Linux for a day.
 
 ### 3.2 CLI flag and subcommand completion
 `P1.` The largest remaining Warp gap. Three approaches, and this specification picks one:
@@ -543,7 +542,7 @@ Naming these matters as much as the roadmap, because each is a plausible request
 
 ## 6. Ordered plan
 
-**Now: credibility.** Linux and Windows in CI (§3.1). Read `AGENTS.md` and existing MCP
+**Now: credibility.** Linux in CI (§3.1). Read `AGENTS.md` and existing MCP
 config (§4.2). CLI completion via the shell (§3.2).
 
 **Next: the two structural gaps.** Detach and reattach (§3.8). Parallel Threads with worktree
@@ -559,6 +558,14 @@ a cloud agent's PR being the part nobody else has (§4.3). Local models as real 
 
 **Later, or never.** Floating panes, layout artefacts, history sync, the MCP server, instant
 replay. Each is defensible; none changes the argument for using Tervin.
+
+**Windows: deferred, not refused.** ConPTY covers the PTY layer behind `portable-pty`, so the
+terminal itself is tractable. Shell integration is the blocker: there is no equivalent to
+`ZDOTDIR`, so the automatic injection in §3.1 does not carry over, and the completion design
+in §3.2 assumes a Unix shell. Tervin's scope is macOS and Linux, which is coherent because
+both share those assumptions. This is in the roadmap rather than in §5 deliberately: nothing
+about the design forecloses Windows, and the cost is a shell-integration story nobody has
+written yet rather than a decision against it.
 
 ---
 

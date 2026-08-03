@@ -52,6 +52,46 @@ jobs:
             command -v "$tool" >/dev/null || { echo "::error::$tool is missing, so its tests were skipped"; exit 1; }
           done
 
+  linux:
+    # Tervin has only ever been run on macOS. The code is written for Unix generally
+    # and nothing in the PTY layer is macOS-specific, but "should work" is not a
+    # claim worth making, so this job exists to find out. README still says macOS is
+    # the tested platform, and that does not change until a person has used Linux for
+    # a day: a green CI run proves the tests pass, not that the product is usable.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: System dependencies
+        # Tauri links against the system webview, so even `cargo test` needs these:
+        # tervin-app is part of the workspace. `zsh` and `vim` are here because the
+        # terminal tests drive them and skip silently when they are missing, which
+        # would make this job green while proving very little.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf zsh vim
+
+      - name: Confirm the tools the terminal tests need are present
+        # Before the tests rather than after, so a missing tool reads as setup being
+        # wrong rather than as a test failure.
+        run: |
+          for tool in vim less zsh; do
+            command -v "$tool" >/dev/null || { echo "::error::$tool is missing, so its tests would be skipped"; exit 1; }
+          done
+
+      - name: Tests
+        run: cargo test --workspace
+
+      - name: Clippy
+        # Separate from the macOS job because `cfg` differences mean each platform
+        # compiles code the other does not, so a lint can be clean on one and not the
+        # other.
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
   ui:
     runs-on: ubuntu-latest
     steps:

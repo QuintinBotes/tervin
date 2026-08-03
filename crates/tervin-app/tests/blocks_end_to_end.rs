@@ -15,12 +15,26 @@ use shell_integration::{InjectionMode, Shell};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use terminal_core::{PtyConfig, PtyEvent};
+use terminal_core::{PtyConfig, PtyEvent, ShellSignal};
 use tervin_core::{PaneId, SessionId};
 
 /// Generous, because a login shell sources the user's rc files — which on a real
 /// machine can mean a version manager and a completion framework.
 const TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long after `133;A` to treat a shell that sends no `133;B` as ready.
+const PROMPT_SETTLE: Duration = Duration::from_millis(300);
+
+/// Longest to wait for a prompt before deciding this shell does not report them.
+///
+/// Bounded separately from [`TIMEOUT`] because it is a different question. Waiting
+/// the full timeout for a signal that is never coming is what turned this file from
+/// a 32-second run into a 90-second one.
+const PROMPT_WAIT: Duration = Duration::from_secs(5);
+
+/// Fallback spacing for a shell that reports no prompts, as this file used
+/// throughout before it learned to wait for one.
+const BLIND_SETTLE: Duration = Duration::from_millis(400);
 
 /// A scratch directory that cleans itself up.
 struct Scratch(std::path::PathBuf);
@@ -89,17 +103,25 @@ fn blocks_from(shell_program: &str, shell: Shell, commands: &[&str]) -> Vec<bloc
         spill.path().to_path_buf(),
     );
 
-    // Let the shell reach its first prompt before typing, so input is not
-    // swallowed by a shell still building its line editor.
-    std::thread::sleep(Duration::from_millis(1200));
+    let mut finished: Vec<block_engine::Block> = Vec::new();
+
+    // Wait for the shell to say it is ready, rather than betting on how long that
+    // takes. One command at a time, each typed into a drawn prompt, so each forms
+    // its own Block.
+    //
+    // A shell that does not report prompts at all — bash 3.2, which macOS still
+    // ships — is asked once and then left alone, because asking again only buys
+    // another wait for an answer that is not coming.
+    let mut reports_prompts = wait_until_reading(&session, &rx, &mut builder, &mut finished);
     for command in commands {
         session.write(command.as_bytes()).expect("write failed");
-        // One at a time, so each produces its own Block rather than being typed
-        // into a shell that has not yet drawn a new prompt.
-        std::thread::sleep(Duration::from_millis(400));
+        if reports_prompts {
+            reports_prompts = wait_for_prompt(&rx, &mut builder, &mut finished);
+        } else {
+            std::thread::sleep(BLIND_SETTLE);
+        }
     }
 
-    let mut finished: Vec<block_engine::Block> = Vec::new();
     let deadline = Instant::now() + TIMEOUT;
 
     while Instant::now() < deadline && finished.len() < commands.len() {
@@ -126,6 +148,108 @@ fn blocks_from(shell_program: &str, shell: Shell, commands: &[&str]) -> Vec<bloc
 
     let _ = session.kill();
     finished
+}
+
+/// Wait until the shell is not merely showing a prompt but reading from the pty.
+///
+/// Those are different states, and the gap between them is where the first
+/// character of the first command went. `133;B` lives inside `PS1`, so it is
+/// emitted when the prompt is *printed*. zsh's line editor then calls `tcsetattr`
+/// with a flush, which discards anything typed in the meantime. On an idle machine
+/// that window is too narrow to hit. Under a full `cargo test --workspace` it is
+/// wide enough to swallow an `e` — which is why CI failed on `cho tervin-block-one`
+/// while running this crate on its own never did, and why waiting for the prompt
+/// marker alone was not enough.
+///
+/// So this asks the shell to prove it, rather than inferring readiness from output:
+/// send a newline and wait for the prompt drawn in reply. A prompt that appears
+/// *after* input was sent is one the shell could only have drawn by reading that
+/// input. An empty line runs no command, so it forms no Block and the counts the
+/// tests assert are unaffected. If the newline is swallowed too, that is simply a
+/// shell that was not ready, and asking again is the right response.
+fn wait_until_reading(
+    session: &terminal_core::PtySession,
+    rx: &mpsc::Receiver<PtyEvent>,
+    builder: &mut BlockBuilder,
+    finished: &mut Vec<block_engine::Block>,
+) -> bool {
+    // A shell that never reports a prompt cannot be asked to prove anything.
+    if !wait_for_prompt(rx, builder, finished) {
+        return false;
+    }
+    for _ in 0..5 {
+        if session.write(b"\n").is_err() {
+            return false;
+        }
+        if wait_for_prompt(rx, builder, finished) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Drain events until the shell has drawn a prompt, keeping any Blocks that finish.
+///
+/// A fixed sleep here is a bet on how fast someone else's machine starts a shell,
+/// and losing that bet is not merely slow. zsh's line editor calls `tcsetattr` with
+/// a flush when it initialises, which discards whatever has already been typed, so
+/// a sleep that is fractionally too short does not delay the input — it eats the
+/// front of it. The Linux runner produced `cho` where this test typed `echo`, and
+/// reported it as a command that "did not survive the round trip", which points at
+/// the marker pipeline rather than at the clock.
+///
+/// `PromptEnd` is OSC 133;B, which zsh's injected integration emits once the prompt
+/// is drawn and the shell is ready to read. Waiting for it is exact: measured here
+/// at 485ms for the first prompt and 17ms for later ones, against a 1200ms guess.
+///
+/// Bash never sends it in this configuration. It is a login shell, and the marker
+/// is appended to `PS1` by the injected rc file, so anything that sets `PS1`
+/// afterwards drops it. Its `133;A` still arrives, so that plus a short settle is
+/// what bash gets. Worth knowing beyond this test: any feature keyed on `PromptEnd`
+/// is not getting one from bash.
+fn wait_for_prompt(
+    rx: &mpsc::Receiver<PtyEvent>,
+    builder: &mut BlockBuilder,
+    finished: &mut Vec<block_engine::Block>,
+) -> bool {
+    let deadline = Instant::now() + PROMPT_WAIT;
+    let mut prompt_started: Option<Instant> = None;
+
+    while Instant::now() < deadline {
+        match rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(PtyEvent::Chunk(chunk)) => {
+                let mut ready = false;
+                for positioned in &chunk.signals {
+                    match positioned.signal {
+                        // Definitive: the prompt is drawn and the shell is reading.
+                        ShellSignal::PromptEnd => ready = true,
+                        ShellSignal::PromptStart => {
+                            prompt_started.get_or_insert_with(Instant::now);
+                        }
+                        _ => {}
+                    }
+                }
+                for event in builder.consume(&chunk) {
+                    if let BlockEvent::Finished(block) = event {
+                        finished.push(block);
+                    }
+                }
+                if ready {
+                    return true;
+                }
+            }
+            Ok(PtyEvent::Exited { .. }) => return false,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return false,
+        }
+
+        // A shell that announced a prompt but sends no `133;B` still told us
+        // something. Take it, once it has had a moment to finish drawing.
+        if prompt_started.is_some_and(|t| t.elapsed() >= PROMPT_SETTLE) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Small helper so the sink closure stays readable at the call site.
