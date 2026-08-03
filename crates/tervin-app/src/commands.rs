@@ -476,10 +476,24 @@ pub async fn block_get(
 
 /// Full raw output, including anything that spilled to disk.
 #[tauri::command]
-pub async fn block_output(state: State<'_, Arc<AppState>>, block_id: String) -> Result<Vec<u8>> {
+/// A Block's full output, as a reader would see it.
+///
+/// Escape sequences come off here rather than in the interface, with the same
+/// routine the preview and the search index already use — three views of one
+/// output that have to agree, and previously did not. Handing the bytes over
+/// untouched put the terminal's own bookkeeping in front of the user: zsh's
+/// partial-line marker and a window-title sequence rendered as `[1m[7m%[27m`,
+/// which is not output they produced and not something they can act on.
+pub async fn block_output(state: State<'_, Arc<AppState>>, block_id: String) -> Result<String> {
     let store = state.store.clone();
     let id = BlockId::from_external(block_id);
-    blocking(move || store.read_full_output(&id).map_err(CommandError::from)).await
+    blocking(move || {
+        let bytes = store.read_full_output(&id).map_err(CommandError::from)?;
+        Ok(block_engine::parse::strip_ansi(&String::from_utf8_lossy(
+            &bytes,
+        )))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1145,6 +1159,10 @@ pub async fn thread_start(
     let capabilities = launched.session.capabilities();
     let permissions = launched.session.permissions();
 
+    // The bodies behind each event's raw pointer. Taken before the session is
+    // handed to the registry, because it can only be taken once.
+    let mut raw_rx = launched.session.take_raw_stream();
+
     // Drain the event stream into the store and on to the UI.
     {
         let store = state.store.clone();
@@ -1156,7 +1174,19 @@ pub async fn thread_start(
         let thread_id = thread_id.clone();
         let mut events = launched.events;
         tokio::spawn(async move {
+            // Pointer to body, for events not yet seen. The runtime sends a payload
+            // before the event that references it, so this is normally empty or
+            // holds one entry; it is drained on the way past rather than by its own
+            // task, which would race the event it belongs to.
+            let mut bodies: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+
             while let Some(event) = events.recv().await {
+                if let Some(rx) = raw_rx.as_mut() {
+                    while let Ok((pointer, body)) = rx.try_recv() {
+                        bodies.insert(pointer, body);
+                    }
+                }
                 let _ = app.emit("thread://event", &event);
 
                 // A command an agent ran is the same kind of thing as one you ran, so it
@@ -1177,10 +1207,29 @@ pub async fn thread_start(
                         }),
                     );
                 }
+                // Save what the runtime actually said alongside the event. Without
+                // this the pointer on the event names nothing, and the first
+                // question asked of a surprising event — what did the runtime
+                // really send? — cannot be answered after the fact.
+                let body = event
+                    .raw
+                    .as_ref()
+                    .and_then(|raw| bodies.remove(&raw.pointer));
+
+                // Anything still held belongs to an event that never arrived. Rare,
+                // but this map outlives every event in the session, so it is capped
+                // rather than left to grow.
+                if bodies.len() > 64 {
+                    bodies.clear();
+                }
+
                 let store = store.clone();
                 let event = event.clone();
                 // Persisting is blocking; keep it off the event loop.
-                let _ = tokio::task::spawn_blocking(move || store.append_event(&event, None)).await;
+                let _ = tokio::task::spawn_blocking(move || {
+                    store.append_event(&event, body.as_deref())
+                })
+                .await;
             }
         });
     }

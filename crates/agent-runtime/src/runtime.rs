@@ -365,6 +365,19 @@ pub trait AgentSession: Send + Sync {
     /// True while the underlying process is alive.
     fn is_running(&self) -> bool;
 
+    /// The raw payloads behind this session's events, if the runtime keeps them.
+    ///
+    /// Handed out once, like the event stream, because there is one consumer. Events
+    /// already carry a pointer to what the runtime actually said; without someone
+    /// draining this, that pointer names a body nobody saved, and the question "what
+    /// did the runtime actually send?" has no answer at the moment it is asked.
+    ///
+    /// A runtime with nothing to offer returns `None` and its events simply carry no
+    /// pointers.
+    fn take_raw_stream(&self) -> Option<mpsc::UnboundedReceiver<(String, String)>> {
+        None
+    }
+
     /// End the session and reap the process.
     async fn shutdown(&self) -> Result<()>;
 }
