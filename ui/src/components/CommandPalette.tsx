@@ -71,6 +71,19 @@ export function CommandPalette({ onNewPane }: { onNewPane: () => void }) {
       exited: false,
       exitCode: null,
     });
+    // Discoverable here as well as in the Deck, because until now the only way to
+    // start a Thread was to notice the Send button had renamed itself.
+    out.push({
+      id: "thread.new",
+      label: "New Thread",
+      category: "Agents",
+      hint: "⌘⇧I",
+      run: () => {
+        s.startNewThread();
+        s.setSurface("agents");
+        s.setInspectorTab("thread");
+      },
+    });
     out.push({
       id: "commands.history",
       label: "Command history",

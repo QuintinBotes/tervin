@@ -592,6 +592,18 @@ impl AgentRuntime for ClaudeCodeRuntime {
         crate::runtime::LaunchOptions {
             models: model_choices(),
             efforts: effort_choices(),
+            // Built from the same list the live session offers, so the two cannot
+            // drift into offering different modes for the same runtime.
+            modes: permission_modes()
+                .into_iter()
+                .map(|mode| {
+                    let choice = crate::runtime::LaunchChoice::new(mode.id, mode.name);
+                    match mode.description {
+                        Some(note) => choice.with_note(note),
+                        None => choice,
+                    }
+                })
+                .collect(),
         }
     }
 

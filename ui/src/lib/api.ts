@@ -312,6 +312,15 @@ export interface LaunchChoice {
 export interface LaunchOptions {
   models: LaunchChoice[];
   efforts: LaunchChoice[];
+  /**
+   * Permission modes selectable before a Thread starts.
+   *
+   * Not the same as the modes a live session reports. Plan mode only means
+   * anything at launch: an agent proposes a plan by calling `ExitPlanMode`, and it
+   * only does that when it started in plan mode. A Thread launched in `auto` can
+   * never produce one, so the Plan surface stays empty however long you wait.
+   */
+  modes: LaunchChoice[];
 }
 
 export interface AgentsOverview {

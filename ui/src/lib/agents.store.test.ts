@@ -43,6 +43,7 @@ const OVERVIEW: api.AgentsOverview = {
         { value: "", label: "Default effort" },
         { value: "high", label: "High" },
       ],
+      modes: [{ value: "plan", label: "Plan" }],
     },
   },
   profiles_path: "~/.config/tervin/agents.toml",

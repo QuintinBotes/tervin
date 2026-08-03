@@ -379,6 +379,14 @@ impl LaunchChoice {
 pub struct LaunchOptions {
     pub models: Vec<LaunchChoice>,
     pub efforts: Vec<LaunchChoice>,
+    /// Permission modes selectable *before* a Thread starts.
+    ///
+    /// Distinct from the modes a live session reports, and needed because some
+    /// modes only mean anything at launch. Plan mode is the case that matters: an
+    /// agent proposes a plan by calling `ExitPlanMode`, which it only does when it
+    /// started in plan mode, so a Thread launched in `auto` can never produce a
+    /// plan and the Plan surface stays empty however long you wait.
+    pub modes: Vec<LaunchChoice>,
 }
 
 /// A session plus the event stream it produces.
