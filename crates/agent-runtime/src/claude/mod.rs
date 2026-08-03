@@ -742,6 +742,10 @@ impl AgentSession for ClaudeSession {
         meta.hook_runs = n.hook_runs.clone();
         meta.permission_mode = Some(self.shared.permission_mode.lock().clone());
         meta.modes = permission_modes();
+        // The runtime's own answer, taken from its `init` and kept current, rather
+        // than the directory Tervin asked for. Where an agent is working decides
+        // what every path it touches means.
+        meta.cwd = Some(n.cwd().to_string()).filter(|c| !c.is_empty());
         meta
     }
 

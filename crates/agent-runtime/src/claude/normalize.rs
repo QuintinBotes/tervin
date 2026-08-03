@@ -105,6 +105,14 @@ impl Normalizer {
         }
     }
 
+    /// Where the runtime says this Thread is working.
+    ///
+    /// Its own answer, from `init` and kept current, rather than the directory
+    /// Tervin asked for. Every path an agent touches is relative to this.
+    pub fn cwd(&self) -> &str {
+        &self.cwd
+    }
+
     pub fn state(&self) -> ThreadState {
         self.state
     }
