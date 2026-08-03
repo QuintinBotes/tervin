@@ -24,8 +24,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./lib/api";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   activeThreadCount,
+  describeError,
   overlayOpen,
   threadsNeedingUser,
   useWorkspace,
@@ -667,10 +669,15 @@ function TopBar({ keymap, waitingCount }: { keymap: Keymap; waitingCount: number
     >
       <Mark size={16} />
 
+      {/* The project decides what the file index holds, what `@path` completes
+          against, and where a Thread starts. It was inferred at launch and there
+          was no way to change it from inside the app — so a Tervin that guessed a
+          subdirectory could not find the rest of the repository and could not be
+          told otherwise. The control that shows the project now also sets it. */}
       <button
         className="btn btn-sm"
-        onClick={() => s.setSettings(true)}
-        title={s.environment?.project_root ?? "Choose a project"}
+        onClick={() => void chooseProject(s)}
+        title={`${s.environment?.project_root ?? "Choose a project"}\nClick to open a different project.`}
         style={{ borderColor: "var(--tervin-raised)" }}
       >
         <span className="truncate" style={{ maxWidth: 170 }}>
@@ -1265,6 +1272,38 @@ export function toneForState(state: api.ThreadState): string {
   if (["failed", "interrupted", "disconnected"].includes(state)) return "red";
   if (state === "unknown" || state === "idle") return "muted";
   return "teal";
+}
+
+/**
+ * Open a different project, and rebuild everything that depends on which one.
+ *
+ * The root is inferred at launch, and an inference can be wrong: `tauri dev` runs
+ * the binary from the Tauri crate's own directory, so Tervin would root itself at
+ * one crate and index sixty-odd files out of a repository of several hundred. With
+ * no way to change it from inside the app, the only fix was to relaunch from
+ * somewhere else — which a packaged build does not let you do at all.
+ *
+ * The environment is refreshed rather than assumed, so the path shown is the one
+ * the backend accepted after expanding and validating it.
+ */
+async function chooseProject(s: ReturnType<typeof useWorkspace.getState>) {
+  try {
+    const picked = await open({
+      directory: true,
+      multiple: false,
+      title: "Open a project",
+      defaultPath: s.environment?.project_root ?? undefined,
+    });
+    if (typeof picked !== "string") return;
+    await api.setProjectRoot(picked);
+    await s.refreshEnvironment();
+    // The index is rebuilt on the Rust side; git and Blocks are scoped to the
+    // project and would otherwise still describe the previous one.
+    await s.refreshGit();
+    await s.refreshBlocks();
+  } catch (e) {
+    s.pushNotice(describeError(e));
+  }
 }
 
 export function shortenPath(path: string): string {

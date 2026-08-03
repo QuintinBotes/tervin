@@ -258,6 +258,14 @@ interface WorkspaceState {
   activeModel: string;
   activeEffort: string;
   activeMode: string;
+  /**
+   * A directory chosen for the next Thread, overriding the focused pane.
+   *
+   * Null means "follow the terminal", which is the default and the usual case.
+   * Set when someone wants a Thread somewhere other than where they are standing,
+   * which the pane's directory alone cannot express.
+   */
+  activeCwd: string | null;
 
   // threads
   threads: Record<string, ThreadView>;
@@ -378,6 +386,7 @@ interface WorkspaceActions {
   setActiveModel: (model: string) => void;
   setActiveEffort: (effort: string) => void;
   setActiveMode: (mode: string) => void;
+  setActiveCwd: (cwd: string | null) => void;
   /** Clear the selection so the composer starts a Thread instead of continuing one. */
   startNewThread: () => void;
 
@@ -487,6 +496,7 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   activeModel: "",
   activeEffort: "",
   activeMode: "",
+  activeCwd: null,
   activeProfileId: null,
 
   threads: {},
@@ -910,6 +920,7 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   setActiveModel: (activeModel) => set({ activeModel }),
   setActiveEffort: (activeEffort) => set({ activeEffort }),
   setActiveMode: (activeMode) => set({ activeMode }),
+  setActiveCwd: (activeCwd) => set({ activeCwd }),
 
   // Deselecting is the whole mechanism: the composer starts a Thread when none is
   // selected and continues one when it is. Without a way back to "none", a running

@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../lib/api";
+import { open } from "@tauri-apps/plugin-dialog";
 import { describeError, useWorkspace, type ThreadView } from "../lib/store";
 import { containsPane } from "../lib/panes";
 import {
@@ -210,14 +211,15 @@ export function ThreadPanel() {
           profile_id: profile?.id ?? null,
           prompt: text,
           attachments,
-          // Where the focused pane is, not the project root.
+          // An explicitly chosen directory wins; otherwise the focused pane's.
           //
           // Consistency rather than preference: `@path` completion in this very
           // composer already resolves against the pane's directory, so a Thread
           // started in the project root could be handed a path that completed to
           // one file and means another. The terminal is the context the user is
-          // working in, and the agent they launch from it should share that.
-          cwd: focusedCwd,
+          // working in, and the agent they launch from it should share that —
+          // unless they said otherwise, which is what `activeCwd` is for.
+          cwd: s.activeCwd ?? focusedCwd,
           model: s.activeModel || null,
           effort: s.activeEffort || null,
           // Only meaningful here. An agent proposes a plan by calling
@@ -264,9 +266,8 @@ export function ThreadPanel() {
    * before starting rather than discovered after, because it follows the terminal
    * and will therefore change as the user moves around.
    */
-  const threadCwd =
-    thread?.info?.metadata?.cwd ??
-    (thread ? null : (focusedCwd ?? s.environment?.project_root ?? null));
+  const nextCwd = s.activeCwd ?? focusedCwd ?? s.environment?.project_root ?? null;
+  const threadCwd = thread?.info?.metadata?.cwd ?? (thread ? null : nextCwd);
 
   return (
     // `width: 100%` and `minWidth: 0` are load-bearing: this renders as a flex item,
@@ -317,18 +318,12 @@ export function ThreadPanel() {
         ) : (
           <span className="col grow" style={{ gap: 0, minWidth: 0 }}>
             <span className="meta">No Thread running</span>
-            {/* Said before starting, not after, and it moves: this follows the
-                focused pane, so `cd` in the terminal changes where the next Thread
-                will run. Showing it is what makes that predictable rather than
-                surprising. */}
-            {threadCwd && (
-              <span
-                className="meta mono truncate"
-                title={`${threadCwd}\nA new Thread starts here, following the focused pane.`}
-              >
-                next Thread runs in {abbreviatePath(threadCwd)}
-              </span>
-            )}
+            {/* Said before starting, and changeable. By default it follows the
+                focused pane, so `cd` in the terminal moves it; clicking pins it
+                somewhere else. Showing it is what makes a directory that moves
+                predictable rather than surprising, and being able to set it is
+                what makes a Thread reachable outside the pane you happen to be in. */}
+            {threadCwd && <NextThreadCwd path={threadCwd} pinned={s.activeCwd !== null} />}
           </span>
         )}
       </div>
@@ -742,6 +737,63 @@ function LaunchPickers({
         </span>
       )}
     </>
+  );
+}
+
+/**
+ * Where the next Thread will start, and the control for changing it.
+ *
+ * Two behaviours in one line, which is deliberate. Unpinned it follows the focused
+ * pane, so moving around the terminal moves the agent you are about to start —
+ * that is the common case and needs no interaction. Pinned it stays put, for
+ * starting a Thread somewhere other than where you are standing, which the pane's
+ * directory alone cannot express.
+ *
+ * The state is visible either way. A directory that silently follows something
+ * else is fine; a directory that silently follows something else *without saying
+ * so* is how an agent ends up working in the wrong repository.
+ */
+function NextThreadCwd({ path, pinned }: { path: string; pinned: boolean }) {
+  const s = useWorkspace();
+
+  async function choose() {
+    try {
+      const picked = await open({
+        directory: true,
+        multiple: false,
+        title: "Where should the next Thread run?",
+        defaultPath: path,
+      });
+      if (typeof picked === "string") s.setActiveCwd(picked);
+    } catch (e) {
+      s.pushNotice(describeError(e));
+    }
+  }
+
+  return (
+    <span className="row" style={{ gap: "var(--sp-1)", minWidth: 0 }}>
+      <button
+        className="btn btn-xs mono truncate"
+        onClick={() => void choose()}
+        title={`${path}\n${
+          pinned
+            ? "Pinned. The next Thread starts here."
+            : "Following the focused pane. Click to choose a different directory."
+        }`}
+      >
+        {pinned ? "📌 " : ""}
+        {abbreviatePath(path)}
+      </button>
+      {pinned && (
+        <button
+          className="btn btn-xs"
+          onClick={() => s.setActiveCwd(null)}
+          title="Go back to following the focused pane"
+        >
+          unpin
+        </button>
+      )}
+    </span>
   );
 }
 
