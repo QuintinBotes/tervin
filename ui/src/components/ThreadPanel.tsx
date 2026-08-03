@@ -14,7 +14,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../lib/api";
-import { open } from "@tauri-apps/plugin-dialog";
 import { describeError, useWorkspace, type ThreadView } from "../lib/store";
 import { containsPane } from "../lib/panes";
 import {
@@ -743,55 +742,141 @@ function LaunchPickers({
 /**
  * Where the next Thread will start, and the control for changing it.
  *
- * Two behaviours in one line, which is deliberate. Unpinned it follows the focused
- * pane, so moving around the terminal moves the agent you are about to start —
- * that is the common case and needs no interaction. Pinned it stays put, for
- * starting a Thread somewhere other than where you are standing, which the pane's
- * directory alone cannot express.
+ * Unpinned it follows the focused pane, so moving around the terminal moves the
+ * agent you are about to start — the common case, needing no interaction. Pinned
+ * it stays put, for starting a Thread somewhere other than where you are standing,
+ * which the pane's directory alone cannot express.
+ *
+ * Changing it is a typed path with completion, not a file dialog. This is a
+ * terminal: the muscle memory is `cd`, the paths are already indexed, and a modal
+ * OS chooser to pick a directory you could have typed in four keystrokes is the
+ * wrong idiom in an application whose whole argument is that the keyboard is
+ * faster. `~` expands, and the completion is directories only, for the same reason
+ * `cd` completion is.
  *
  * The state is visible either way. A directory that silently follows something
- * else is fine; a directory that silently follows something else *without saying
- * so* is how an agent ends up working in the wrong repository.
+ * else is fine; one that does so without saying is how an agent ends up working in
+ * the wrong repository.
  */
 function NextThreadCwd({ path, pinned }: { path: string; pinned: boolean }) {
   const s = useWorkspace();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(path);
+  const [matches, setMatches] = useState<api.Completion[]>([]);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
-  async function choose() {
-    try {
-      const picked = await open({
-        directory: true,
-        multiple: false,
-        title: "Where should the next Thread run?",
-        defaultPath: path,
-      });
-      if (typeof picked === "string") s.setActiveCwd(picked);
-    } catch (e) {
-      s.pushNotice(describeError(e));
-    }
+  useEffect(() => {
+    if (editing) requestAnimationFrame(() => inputRef.current?.select());
+  }, [editing]);
+
+  // Directories only, debounced for the same reason the composer's is: this is
+  // about IPC volume rather than filesystem cost.
+  useEffect(() => {
+    if (!editing) return;
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      void api
+        .pathComplete(draft, "dirs", null, 6)
+        .then((next) => {
+          if (!cancelled) setMatches(next);
+        })
+        .catch(() => {
+          if (!cancelled) setMatches([]);
+        });
+    }, 60);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft, editing]);
+
+  function commit(value: string) {
+    const trimmed = value.trim();
+    setEditing(false);
+    setMatches([]);
+    // Empty means "stop pinning", which is the same thing the unpin button does
+    // and the obvious meaning of clearing the box.
+    s.setActiveCwd(trimmed === "" ? null : trimmed);
+  }
+
+  if (!editing) {
+    return (
+      <span className="row" style={{ gap: "var(--sp-1)", minWidth: 0 }}>
+        <button
+          className="btn btn-xs mono truncate"
+          onClick={() => {
+            setDraft(path);
+            setEditing(true);
+          }}
+          title={`${path}\n${
+            pinned
+              ? "Pinned. The next Thread starts here."
+              : "Following the focused pane. Click to type a different directory."
+          }`}
+        >
+          {pinned ? "📌 " : ""}
+          {abbreviatePath(path)}
+        </button>
+        {pinned && (
+          <button
+            className="btn btn-xs"
+            onClick={() => s.setActiveCwd(null)}
+            title="Go back to following the focused pane"
+          >
+            unpin
+          </button>
+        )}
+      </span>
+    );
   }
 
   return (
-    <span className="row" style={{ gap: "var(--sp-1)", minWidth: 0 }}>
-      <button
-        className="btn btn-xs mono truncate"
-        onClick={() => void choose()}
-        title={`${path}\n${
-          pinned
-            ? "Pinned. The next Thread starts here."
-            : "Following the focused pane. Click to choose a different directory."
-        }`}
-      >
-        {pinned ? "📌 " : ""}
-        {abbreviatePath(path)}
-      </button>
-      {pinned && (
-        <button
-          className="btn btn-xs"
-          onClick={() => s.setActiveCwd(null)}
-          title="Go back to following the focused pane"
-        >
-          unpin
-        </button>
+    <span className="col" style={{ gap: 2, minWidth: 0, position: "relative" }}>
+      <input
+        ref={inputRef}
+        className="mono"
+        value={draft}
+        aria-label="Directory for the next Thread"
+        spellCheck={false}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit(draft);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            // Abandons the edit rather than the pin: Escape undoes what you were
+            // typing, it does not change where the Thread runs.
+            setEditing(false);
+            setMatches([]);
+          } else if (e.key === "Tab" && matches[0]) {
+            // One candidate is the common case after typing a prefix, and Tab is
+            // what a terminal user's hands do.
+            e.preventDefault();
+            setDraft(matches[0].path);
+          }
+        }}
+        onBlur={() => commit(draft)}
+        style={{ width: "100%", minWidth: 220 }}
+      />
+      {matches.length > 0 && (
+        <span className="col" style={{ gap: 0 }}>
+          {matches.slice(0, 4).map((m) => (
+            <button
+              key={m.path}
+              className="btn btn-xs mono truncate"
+              style={{ justifyContent: "flex-start" }}
+              // `onMouseDown` rather than `onClick`: the input's blur fires first
+              // and would commit the half-typed draft before the click landed.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                commit(m.path);
+              }}
+            >
+              {m.path}
+            </button>
+          ))}
+        </span>
       )}
     </span>
   );
