@@ -31,6 +31,38 @@ const FLUSH_BYTES: usize = 32 * 1024;
 /// Size of each blocking PTY read.
 const READ_BUF: usize = 64 * 1024;
 
+/// How often to ask whether the child has taken over the terminal.
+const INPUT_GATE_POLL: Duration = Duration::from_millis(5);
+
+/// Longest to hold input waiting for a child that may never take over.
+///
+/// Bounded because plenty of programs read in canonical mode for their whole life
+/// and are perfectly able to receive input. They discard nothing, so gating them
+/// would delay real keystrokes for no benefit.
+const INPUT_GATE_MAX: Duration = Duration::from_millis(1500);
+
+/// Whether the child has put the terminal into a mode it reads input from itself.
+///
+/// A line editor — zsh's ZLE, bash's readline — clears `ICANON` as it takes over,
+/// and it does so with a `tcsetattr` that discards input already queued. Once the
+/// flag is clear that call has happened, so anything written from here on survives.
+///
+/// The master's termios reports the pty's line discipline, which makes this the
+/// child's own answer rather than a guess from elapsed time or from output, both of
+/// which say only that a prompt was *printed* — a different and earlier moment.
+#[cfg(unix)]
+fn accepts_input(fd: std::os::unix::io::RawFd) -> bool {
+    // SAFETY: `fd` is the pty master, owned by this session and open for as long as
+    // the watcher runs. `tcgetattr` only reads, and only into the local struct.
+    unsafe {
+        let mut settings: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(fd, &mut settings) != 0 {
+            return false;
+        }
+        settings.c_lflag & libc::ICANON == 0
+    }
+}
+
 /// Longest a synchronized-output frame may hold back a flush.
 ///
 /// An application that sets DEC 2026 and then blocks — or crashes before
@@ -207,10 +239,16 @@ pub struct PtySession {
     /// `MasterPty` is `Send` but not `Sync`, and the session is shared across
     /// threads by the pane registry and every IPC command that touches it.
     master: Mutex<Box<dyn MasterPty + Send>>,
-    writer: Mutex<Box<dyn Write + Send>>,
+    /// Shared with the readiness watcher, which flushes any gated input.
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     alive: Arc<AtomicBool>,
     size: Mutex<(u16, u16)>,
+    /// Input written before the child could receive it.
+    ///
+    /// `Some` while the child is still taking over the terminal, `None` once
+    /// anything written goes straight through. See [`PtySession::write`].
+    pending_input: Arc<Mutex<Option<Vec<u8>>>>,
 }
 
 impl PtySession {
@@ -462,13 +500,53 @@ impl PtySession {
                 .map_err(PtyError::Io)?;
         }
 
+        let pending_input = Arc::new(Mutex::new(Some(Vec::new())));
+        let master = Mutex::new(pair.master);
+        let writer = Arc::new(Mutex::new(writer));
+
+        // Release input as soon as the child can actually receive it.
+        #[cfg(unix)]
+        {
+            let fd = master.lock().as_raw_fd();
+            let pending = pending_input.clone();
+            let writer = writer.clone();
+            let alive = alive.clone();
+            std::thread::Builder::new()
+                .name(format!("tervin-pty-ready-{}", config.pane_id))
+                .spawn(move || {
+                    let deadline = Instant::now() + INPUT_GATE_MAX;
+                    while Instant::now() < deadline
+                        && alive.load(Ordering::SeqCst)
+                        && !fd.is_some_and(accepts_input)
+                    {
+                        std::thread::sleep(INPUT_GATE_POLL);
+                    }
+
+                    // Open the gate either way, and under the same lock `write`
+                    // takes, so nothing written afterwards can overtake what was
+                    // held. A child that never leaves canonical mode — `cat`, a
+                    // pager reading lines — discards nothing and must not be gated.
+                    let mut pending = pending.lock();
+                    if let Some(queued) = pending.take().filter(|q| !q.is_empty()) {
+                        let mut w = writer.lock();
+                        let _ = w.write_all(&queued).and_then(|()| w.flush());
+                    }
+                })
+                .map_err(PtyError::Io)?;
+        }
+        #[cfg(not(unix))]
+        {
+            *pending_input.lock() = None;
+        }
+
         Ok(Self {
             pane_id: config.pane_id,
-            master: Mutex::new(pair.master),
-            writer: Mutex::new(writer),
+            master,
+            writer,
             child,
             alive,
             size: Mutex::new((config.cols, config.rows)),
+            pending_input,
         })
     }
 
@@ -485,9 +563,28 @@ impl PtySession {
     }
 
     /// Write user input to the PTY.
+    ///
+    /// Input written before the child has taken over the terminal is held rather
+    /// than sent. A shell's line editor calls `tcsetattr` with `TCSAFLUSH` when it
+    /// starts reading, and that **discards whatever is already queued** — so input
+    /// sent a moment too early is not delayed, it is destroyed. Tervin writes to a
+    /// pane programmatically as well as on keystrokes, and a restored session or an
+    /// agent-issued command lands squarely in that window: the symptom is a command
+    /// that runs with its first character missing.
+    ///
+    /// The gate is held under the same lock the watcher releases it with, so a write
+    /// arriving after the gate opens can never overtake one that was held. It costs
+    /// one uncontended lock once the pane is running.
     pub fn write(&self, data: &[u8]) -> Result<(), PtyError> {
         if !self.is_alive() {
             return Err(PtyError::NotRunning(self.pane_id.clone()));
+        }
+        {
+            let mut pending = self.pending_input.lock();
+            if let Some(queue) = pending.as_mut() {
+                queue.extend_from_slice(data);
+                return Ok(());
+            }
         }
         let mut w = self.writer.lock();
         w.write_all(data)?;
