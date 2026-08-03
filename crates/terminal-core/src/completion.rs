@@ -45,26 +45,36 @@
 //!
 //! ## Status: not finished, and not wired up
 //!
-//! The decoding and parsing are done and tested. Driving zsh is not: it currently
-//! returns no candidates, and two causes have been found and fixed on the way to
-//! that, both of which the next attempt would otherwise rediscover.
+//! Decoding and parsing are done and tested. Driving zsh is not. Three obstacles
+//! have been found and fixed on the way, each of which failed silently and would
+//! otherwise cost the next attempt the same time:
 //!
 //! - **`TERM=dumb` disables ZLE**, and without ZLE there is no completion system at
-//!   all — Tab is inserted as a literal tab and the reply is empty. It looks exactly
-//!   like a shell with nothing installed.
+//!   all — Tab is inserted as a literal tab and the reply is empty, which looks
+//!   exactly like a shell with nothing installed.
 //! - **The setup line contained the marker literally**, so the *echo* of it matched
-//!   and the reader carried on before setup had run. Fixed by splitting the marker
+//!   and the reader continued before setup had run. Fixed by splitting the marker
 //!   with an empty quote, the same trick the PTY tests use.
+//! - **The timeout did not bound anything.** `Read` on a pty blocks with no way to
+//!   interrupt it, so a deadline checked between reads never fires: with nothing
+//!   arriving the call never returned and the caller hung. Reading now happens on
+//!   its own thread behind a channel, so the deadline is real. This one matters
+//!   beyond this module — it is the failure that would have frozen typing.
 //!
-//! What remains: after setup, two markers arrive together — the explicit `print -n`
-//! and the redrawn prompt — so the read that should wait for the listing matches
-//! the second of those immediately. Counting markers is the wrong primitive; the
-//! next attempt should distinguish the prompt marker from a completion-finished
-//! marker, most likely by binding a widget that prints a *different* marker after
-//! `expand-or-complete` returns, so the two events are never confused.
+//! What remains: the widget bound to `^T` does not report. It runs
+//! `expand-or-complete` and then prints [`DONE`], which is the right shape — a
+//! second, distinguishable event rather than counting occurrences of the first,
+//! since the prompt and the setup both emit the ready marker. But no `DONE` ever
+//! arrives, so either the widget is not being defined by that one-line setup
+//! (quoting of the function body through a single written line is the first thing
+//! to check) or `print` inside a widget is not reaching the pty. Driving the same
+//! setup by hand in a real zsh and watching what `bindkey ^T` reports is the next
+//! step, before any more code.
 //!
-//! Nothing calls this yet. It compiles and its unit tests pass, and it is committed
-//! rather than deleted because the two findings above cost real time to establish.
+//! Nothing calls this. It is not wired to the composer and is on no path a user
+//! reaches, so it cannot regress anything while unfinished. `TERVIN_COMP_DEBUG=1`
+//! dumps the raw and decoded streams, which is the only practical way to see what
+//! is happening in here.
 
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
@@ -103,6 +113,17 @@ const MARKER: &str = "@@TERVIN-READY@@";
 /// mistake the spike made and the spec warned about. Split by an empty quote, the
 /// echo reads `@@TERVIN''-READY@@` while the value is unchanged.
 const MARKER_LITERAL: &str = "@@TERVIN''-READY@@";
+
+/// Printed by a widget once completion has actually finished.
+///
+/// A second, different marker rather than a count of the first. After setup the
+/// `print -n` and the redrawn prompt both emit the ready marker, so "how many have
+/// I seen" cannot distinguish "setup done" from "listing done" — counting is the
+/// wrong primitive, and it read the prompt as the end of a listing that had not
+/// started. A widget that runs `expand-or-complete` and then prints this fires
+/// exactly once, after the candidates exist.
+const DONE: &str = "@@TERVIN-DONE@@";
+const DONE_LITERAL: &str = "@@TERVIN''-DONE@@";
 
 /// Ask zsh what completes `line`.
 ///
@@ -146,7 +167,7 @@ pub fn zsh_completions(
         .map_err(|e| CompletionError::Io(e.to_string()))?;
     drop(pair.slave);
 
-    let mut reader = pair
+    let reader = pair
         .master
         .try_clone_reader()
         .map_err(|e| CompletionError::Io(e.to_string()))?;
@@ -155,6 +176,8 @@ pub fn zsh_completions(
         .take_writer()
         .map_err(|e| CompletionError::Io(e.to_string()))?;
 
+    let rx = spawn_reader(reader);
+    let mut acc = String::new();
     let deadline = Instant::now() + timeout;
     let result = (|| -> Result<Vec<ShellCompletion>, CompletionError> {
         // Setup, then a marker so the listing that follows cannot be confused with
@@ -165,20 +188,25 @@ pub fn zsh_completions(
              autoload -Uz compinit && compinit -u -D; \
              zstyle ':completion:*' list-prompt ''; \
              zstyle ':completion:*' menu no; \
+             _tervin_done() {{ zle expand-or-complete; print -n '{DONE_LITERAL}'; }}; \
+             zle -N _tervin_done; \
+             bindkey '^T' _tervin_done; \
              print -n '{MARKER_LITERAL}'\n"
         );
         write_all(&mut writer, setup.as_bytes())?;
         // Once: the echo can no longer contain it, so the first occurrence is the
         // real one, printed after everything above has actually run.
-        read_until(&mut reader, MARKER, deadline, 1)?;
+        read_until(&rx, &mut acc, MARKER, deadline, 1)?;
 
-        // The line, then Tab. Tab is what asks compsys; nothing else does.
+        // The line, then the bound key. Not Tab: Tab runs completion and leaves no
+        // trace of having finished, which is the whole difficulty. `^T` runs the
+        // same completion and then says so.
         write_all(&mut writer, line.as_bytes())?;
-        write_all(&mut writer, b"\t")?;
+        write_all(&mut writer, b"\x14")?;
 
-        // zsh prints the listing and redraws the prompt, so the marker arrives
-        // again on the far side of the candidates.
-        let listing = read_until(&mut reader, MARKER, deadline, 1)?;
+        // Waits for the widget's own marker, which cannot be confused with the
+        // prompt however many times the prompt is redrawn.
+        let listing = read_until(&rx, &mut acc, DONE, deadline, 1)?;
         Ok(parse_listing(&listing, line))
     })();
 
@@ -215,27 +243,49 @@ fn write_all(w: &mut Box<dyn Write + Send>, bytes: &[u8]) -> Result<(), Completi
 /// Returns everything read. The caller decides which part of it matters, because
 /// the marker appears around the interesting section rather than only after it.
 fn read_until(
-    reader: &mut Box<dyn Read + Send>,
+    rx: &std::sync::mpsc::Receiver<Vec<u8>>,
+    acc: &mut String,
     marker: &str,
     deadline: Instant,
     count: usize,
 ) -> Result<String, CompletionError> {
-    let mut acc = String::new();
-    let mut buf = [0u8; 4096];
-    while Instant::now() < deadline {
-        match reader.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                acc.push_str(&String::from_utf8_lossy(&buf[..n]));
-                if decode(&acc).matches(marker).count() >= count {
-                    return Ok(acc);
-                }
+    loop {
+        if decode(acc).matches(marker).count() >= count {
+            return Ok(std::mem::take(acc));
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(CompletionError::TimedOut);
+        }
+        match rx.recv_timeout(left) {
+            Ok(chunk) => acc.push_str(&String::from_utf8_lossy(&chunk)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                return Err(CompletionError::TimedOut)
             }
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(e) => return Err(CompletionError::Io(e.to_string())),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(CompletionError::TimedOut)
+            }
         }
     }
-    Err(CompletionError::TimedOut)
+}
+
+/// Drain the pty on its own thread.
+///
+/// `Read` on a pty blocks with no way to bound it, so a deadline checked between
+/// reads is not a deadline at all: with nothing arriving, the call never returns
+/// and the caller hangs. This runs while someone is typing, so that is the one
+/// failure this must not have — and it had it.
+fn spawn_reader(mut reader: Box<dyn Read + Send>) -> std::sync::mpsc::Receiver<Vec<u8>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = reader.read(&mut buf) {
+            if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+    rx
 }
 
 /// Undo the terminal's own rendering: `X \b` pairs first, then escape sequences.
