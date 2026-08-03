@@ -45,8 +45,9 @@ pub use mcp::{McpConfig, McpServer};
 pub use profile::{AgentProfile, ImportCandidate, ProfileConfig};
 pub use registry::{RuntimeRegistry, GENERIC_AGENTS};
 pub use runtime::{
-    AgentRuntime, AgentSession, ArbiterDecision, Attachment, Discovery, LaunchConfig,
-    LaunchedSession, PermissionArbiter, PermissionState, RuntimeError, SessionMetadata,
+    AgentRuntime, AgentSession, ArbiterDecision, Attachment, Discovery, LaunchChoice, LaunchConfig,
+    LaunchOptions, LaunchedSession, PermissionArbiter, PermissionState, RuntimeError,
+    SessionMetadata,
 };
 
 /// Resolve a binary on `PATH`.

@@ -96,6 +96,75 @@ beforeEach(() => {
     stagedAttachments: [],
     gitStatus: null,
     connections: null,
+    agentsDiscovery: null,
+    activeModel: "",
+    activeEffort: "",
+  });
+});
+
+describe("the composer's launch pickers", () => {
+  function withRuntime(models: api.LaunchChoice[], efforts: api.LaunchChoice[]) {
+    useWorkspace.setState({
+      agents: {
+        profiles: [
+          {
+            id: "p1",
+            name: "Claude",
+            runtime_id: "claude-code",
+            binary: "claude",
+            args: [],
+            env: {},
+            model: null,
+            permission_mode: null,
+            badge: null,
+            sensitive: false,
+          },
+        ],
+        default_profile: "p1",
+        launch_options: { "claude-code": { models, efforts } },
+        profiles_path: "~/.config/tervin/agents.toml",
+        mcp_path: "~/.config/tervin/mcp.json",
+      },
+      activeProfileId: "p1",
+    });
+  }
+
+  it("offers exactly what the adapter declared", () => {
+    withRuntime(
+      [
+        { value: "", label: "Profile default" },
+        { value: "opus", label: "Opus" },
+        { value: "haiku", label: "Haiku" },
+      ],
+      [
+        { value: "", label: "Default effort" },
+        { value: "max", label: "Max" },
+      ],
+    );
+    const { getByLabelText } = render(<ThreadPanel />);
+
+    const model = getByLabelText("Model") as HTMLSelectElement;
+    expect([...model.options].map((o) => o.value)).toEqual(["", "opus", "haiku"]);
+    const effort = getByLabelText("Effort") as HTMLSelectElement;
+    expect([...effort.options].map((o) => o.value)).toEqual(["", "max"]);
+  });
+
+  it("shows no control for a runtime that declared none", () => {
+    // A picker offering a choice the runtime would reject is worse than no picker,
+    // so an adapter that declares nothing gets nothing drawn.
+    withRuntime([], []);
+    const { queryByLabelText } = render(<ThreadPanel />);
+    expect(queryByLabelText("Model")).toBeNull();
+    expect(queryByLabelText("Effort")).toBeNull();
+  });
+
+  it("does not preselect a value the runtime never offered", () => {
+    // Otherwise a selection carried over from another runtime renders as chosen
+    // while the flag sent is something else entirely.
+    withRuntime([{ value: "", label: "Profile default" }, { value: "opus", label: "Opus" }], []);
+    useWorkspace.setState({ activeModel: "gpt-5" });
+    const { getByLabelText } = render(<ThreadPanel />);
+    expect((getByLabelText("Model") as HTMLSelectElement).value).toBe("");
   });
 });
 

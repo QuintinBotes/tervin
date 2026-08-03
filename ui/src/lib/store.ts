@@ -254,6 +254,9 @@ interface WorkspaceState {
   /** Null until discovery answers, and stays null if it never does. */
   agentsDiscovery: api.AgentsDiscovery | null;
   activeProfileId: string | null;
+  /** Empty string means "whatever the profile already selects", not an empty flag. */
+  activeModel: string;
+  activeEffort: string;
 
   // threads
   threads: Record<string, ThreadView>;
@@ -371,6 +374,8 @@ interface WorkspaceActions {
   refreshAgents: () => Promise<void>;
   refreshApprovals: () => Promise<void>;
   setActiveProfile: (id: string) => void;
+  setActiveModel: (model: string) => void;
+  setActiveEffort: (effort: string) => void;
 
   upsertThread: (thread: ThreadView) => void;
   appendThreadEvent: (event: api.TervinEvent) => void;
@@ -475,6 +480,8 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
   blockFilter: { limit: 200 },
   agents: null,
   agentsDiscovery: null,
+  activeModel: "",
+  activeEffort: "",
   activeProfileId: null,
 
   threads: {},
@@ -890,7 +897,12 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
     }
   },
 
-  setActiveProfile: (activeProfileId) => set({ activeProfileId }),
+  // Switching profile can switch runtime, and the previous runtime's model alias
+  // may mean nothing to the new one. Cleared rather than carried, so a stale
+  // selection cannot be sent to a runtime that would reject or misread it.
+  setActiveProfile: (activeProfileId) => set({ activeProfileId, activeModel: "", activeEffort: "" }),
+  setActiveModel: (activeModel) => set({ activeModel }),
+  setActiveEffort: (activeEffort) => set({ activeEffort }),
 
   // ---------------------------------------------------------------- threads
 

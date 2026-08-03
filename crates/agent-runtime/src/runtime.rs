@@ -130,6 +130,8 @@ pub struct LaunchConfig {
     pub attachments: Vec<Attachment>,
     /// Runtime-specific model selector, when the runtime supports choosing.
     pub model: Option<String>,
+    /// Runtime-specific reasoning effort, when the runtime supports choosing.
+    pub effort: Option<String>,
     /// Runtime-specific permission mode.
     pub permission_mode: Option<String>,
     /// Tool patterns Tervin Rules pre-authorises, passed to the runtime so policy
@@ -172,6 +174,7 @@ impl LaunchConfig {
             prompt: None,
             attachments: Vec::new(),
             model: None,
+            effort: None,
             permission_mode: None,
             allowed_tools: Vec::new(),
             disallowed_tools: Vec::new(),
@@ -324,11 +327,58 @@ pub trait AgentRuntime: Send + Sync {
     /// Static capability declaration, refined by `discover` and by a live session.
     fn capabilities(&self) -> Capabilities;
 
+    /// The launch choices this runtime accepts, for controls shown *before* a
+    /// session exists.
+    ///
+    /// Separate from the modes a live session reports, because the composer has to
+    /// offer these when there is nothing running to ask. Declared by the adapter
+    /// rather than listed in the UI for the same reason the mode picker is: an
+    /// interface offering a choice the runtime would reject is worse than one
+    /// offering none. A runtime that takes neither returns the default and the
+    /// controls do not appear at all.
+    fn launch_options(&self) -> LaunchOptions {
+        LaunchOptions::default()
+    }
+
     /// Start a new session.
     async fn launch(&self, config: LaunchConfig) -> Result<LaunchedSession>;
 
     /// Continue a previous session by its runtime-issued id.
     async fn resume(&self, resume_id: &str, config: LaunchConfig) -> Result<LaunchedSession>;
+}
+
+/// One option in a launch control, as the adapter defines it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaunchChoice {
+    /// What is passed to the runtime verbatim.
+    pub value: String,
+    /// What the picker shows.
+    pub label: String,
+    /// A caveat worth reading before choosing, such as what it costs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl LaunchChoice {
+    pub fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            label: label.into(),
+            note: None,
+        }
+    }
+
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.note = Some(note.into());
+        self
+    }
+}
+
+/// What a runtime accepts at launch. Empty means the control is not shown.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LaunchOptions {
+    pub models: Vec<LaunchChoice>,
+    pub efforts: Vec<LaunchChoice>,
 }
 
 /// A session plus the event stream it produces.
