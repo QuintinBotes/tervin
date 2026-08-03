@@ -9,6 +9,7 @@
 import * as api from "../lib/api";
 import { useWorkspace } from "../lib/store";
 import { toneForState } from "../App";
+import { abbreviatePath } from "./ThreadPanel";
 
 export function AgentDeck() {
   const s = useWorkspace();
@@ -74,8 +75,19 @@ export function AgentDeck() {
             }}
           >
             <span className={`dot dot-${toneForState(t.state)}`} />
-            <span className="truncate" style={{ width: 150, flex: "none" }} title={t.title}>
-              {t.title}
+            <span className="col truncate" style={{ width: 150, flex: "none", gap: 0 }}>
+              <span className="truncate" title={t.title}>
+                {t.title}
+              </span>
+              {/* The Deck is where Threads are compared, and two Threads with
+                  similar titles in different directories are otherwise identical
+                  rows. Which one is pointed at your repo matters more than either
+                  title. */}
+              {t.info?.metadata?.cwd && (
+                <span className="meta mono truncate" title={t.info.metadata.cwd}>
+                  {abbreviatePath(t.info.metadata.cwd)}
+                </span>
+              )}
             </span>
             <span className="meta" style={{ width: 118, flex: "none" }}>
               {profile?.name ?? t.runtimeId}

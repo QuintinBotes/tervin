@@ -605,6 +605,7 @@ impl AgentSession for LocalSession {
             hook_runs: Vec::new(),
             modes: Vec::<SessionMode>::new(),
             instruction_sources: Vec::new(),
+            cwd: Some(self.shared.cwd.clone()),
         }
     }
 

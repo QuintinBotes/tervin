@@ -20,7 +20,7 @@ import { cleanup, render } from "@testing-library/react";
 import * as api from "../lib/api";
 import { DEFAULT_APPEARANCE, useWorkspace, type ThreadView } from "../lib/store";
 import { BlocksPanel } from "./BlocksPanel";
-import { ThreadPanel } from "./ThreadPanel";
+import { ThreadPanel, abbreviatePath } from "./ThreadPanel";
 import { GitPanel } from "./GitPanel";
 import { ConnectionsPanel } from "./ConnectionsPanel";
 import { SavedCommands } from "./SavedCommands";
@@ -99,6 +99,65 @@ beforeEach(() => {
     agentsDiscovery: null,
     activeModel: "",
     activeEffort: "",
+  });
+});
+
+describe("the Thread's working directory", () => {
+  it("is shown for a running Thread, from the runtime's own answer", () => {
+    // Every path an agent reads or writes is relative to this, and a Thread aimed
+    // at the wrong directory looks exactly like one aimed at the right directory
+    // until it edits something.
+    useWorkspace.setState({
+      activeThreadId: "thr_cwd",
+      threads: {
+        thr_cwd: {
+          id: "thr_cwd",
+          profileId: "p1",
+          runtimeId: "claude-code",
+          title: "find the bug",
+          state: "executing",
+          events: [],
+          capabilities: null,
+          permissions: null,
+          paneId: null,
+          info: {
+            running: true,
+            metadata: { hook_runs: [], cwd: "/Users/dev/Projects/tervin/crates/tervin-app" },
+          } as unknown as api.ThreadInfo,
+        } as ThreadView,
+      },
+    });
+    const { getByTitle } = render(<ThreadPanel />);
+    expect(getByTitle("/Users/dev/Projects/tervin/crates/tervin-app")).toBeTruthy();
+  });
+
+  it("says where the next Thread will run before one exists", () => {
+    // A Thread runs in the project root, not the focused pane's directory. Someone
+    // who has just cd'd a pane elsewhere would reasonably assume otherwise.
+    useWorkspace.setState({
+      activeThreadId: null,
+      environment: { project_root: "/Users/dev/Projects/tervin" } as unknown as api.ShellEnvironment,
+    });
+    const { getByText } = render(<ThreadPanel />);
+    expect(getByText(/next Thread runs in/)).toBeTruthy();
+  });
+});
+
+describe("abbreviating a path", () => {
+  it("keeps the tail, because the head is what every path shares", () => {
+    // Truncating from the left leaves `/Users/dev/Projects/…`, which identifies
+    // nothing. The last segments are the part that says which directory this is.
+    const short = abbreviatePath("/Users/dev/Projects/tervin/crates/agent-runtime/src/claude");
+    expect(short).toContain("claude");
+    expect(short.startsWith("…/")).toBe(true);
+  });
+
+  it("writes the home directory as a tilde", () => {
+    expect(abbreviatePath("/Users/dev/proj")).toBe("~/proj");
+  });
+
+  it("leaves a short path alone", () => {
+    expect(abbreviatePath("/tmp/x")).toBe("/tmp/x");
   });
 });
 

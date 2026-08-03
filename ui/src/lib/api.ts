@@ -449,6 +449,15 @@ export interface SessionMetadata {
   /** The user's own hooks, as they actually ran. */
   hook_runs: HookRun[];
   /**
+   * Where this Thread is working, as the runtime reports it.
+   *
+   * Not the pane's directory and not necessarily the one Tervin asked for. Every
+   * path an agent reads or writes is relative to this, and a Thread pointed at the
+   * wrong directory looks exactly like one pointed at the right directory right up
+   * until it edits something.
+   */
+  cwd?: string | null;
+  /**
    * The modes this session offers. Empty means the runtime reported none, and the
    * UI shows no mode control rather than guessing at one.
    */

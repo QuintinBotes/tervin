@@ -219,6 +219,15 @@ pub struct SessionMetadata {
     pub modes: Vec<SessionMode>,
     /// Project instruction files the runtime says it loaded.
     pub instruction_sources: Vec<String>,
+    /// Where this Thread is actually working.
+    ///
+    /// Reported by the runtime rather than assumed from the launch config, because
+    /// they can differ and the runtime's answer is the true one. It matters more
+    /// than most metadata: every file an agent reads or writes is relative to it,
+    /// and a Thread pointed at the wrong directory looks identical to one pointed
+    /// at the right directory until it edits something.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 /// One execution of one of the user's hooks.

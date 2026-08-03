@@ -244,6 +244,18 @@ export function ThreadPanel() {
   const caps = thread?.capabilities;
   const perms = thread?.permissions;
 
+  /**
+   * Where the work is, or will be.
+   *
+   * For a running Thread this is the runtime's own answer rather than the
+   * directory Tervin asked for, because they can differ and the runtime's is the
+   * one that decides what every path means. With no Thread it is the project root,
+   * which is where the next one will start — deliberately not the focused pane's
+   * directory, and worth saying so before someone assumes otherwise.
+   */
+  const threadCwd =
+    thread?.info?.metadata?.cwd ?? (thread ? null : (s.environment?.project_root ?? null));
+
   return (
     // `width: 100%` and `minWidth: 0` are load-bearing: this renders as a flex item,
     // and a flex item with no width sizes to its content — which left the right-hand
@@ -262,7 +274,20 @@ export function ThreadPanel() {
         {thread ? (
           <>
             <span className={`dot dot-${toneForState(thread.state)}`} />
-            <span className="truncate grow" title={thread.title}>{thread.title}</span>
+            <span className="col grow truncate" style={{ gap: 0, minWidth: 0 }}>
+              <span className="truncate" title={thread.title}>
+                {thread.title}
+              </span>
+              {/* Where the work is happening, under the title rather than buried in
+                  a panel. Every path an agent reads or writes is relative to this,
+                  and a Thread pointed at the wrong directory is indistinguishable
+                  from one pointed at the right directory until it edits something. */}
+              {threadCwd && (
+                <span className="meta mono truncate" title={threadCwd}>
+                  {abbreviatePath(threadCwd)}
+                </span>
+              )}
+            </span>
             <span className={`meta tone-${toneForState(thread.state)}`}>
               {thread.state.replace(/_/g, " ")}
             </span>
@@ -278,7 +303,17 @@ export function ThreadPanel() {
             <HandoffButton threadId={thread.id} />
           </>
         ) : (
-          <span className="meta">No Thread running</span>
+          <span className="col grow" style={{ gap: 0, minWidth: 0 }}>
+            <span className="meta">No Thread running</span>
+            {/* Said before starting, not after. A Thread runs in the project root
+                rather than the focused pane's directory, which is not what someone
+                who has just navigated a pane elsewhere would assume. */}
+            {threadCwd && (
+              <span className="meta mono truncate" title={threadCwd}>
+                next Thread runs in {abbreviatePath(threadCwd)}
+              </span>
+            )}
+          </span>
         )}
       </div>
 
@@ -692,6 +727,26 @@ function LaunchPickers({
       )}
     </>
   );
+}
+
+/**
+ * Shorten a path for a header without losing the part that identifies it.
+ *
+ * The home directory becomes `~`, and a long path keeps its last few segments
+ * rather than its first: `/Users/x/Projects/tervin/crates/tervin-app` truncated
+ * from the left reads as `/Users/x/Projects/…`, which is the half every path on
+ * the machine shares. The tail is what tells you which directory this is.
+ *
+ * The element carries the full path as a tooltip, so nothing is actually hidden.
+ */
+export function abbreviatePath(path: string): string {
+  const home = /^\/Users\/[^/]+/.exec(path) ?? /^\/home\/[^/]+/.exec(path);
+  const short = home ? `~${path.slice(home[0].length)}` : path;
+  if (short.length <= 44) return short;
+
+  const parts = short.split("/").filter(Boolean);
+  const tail = parts.slice(-3).join("/");
+  return `…/${tail}`;
 }
 
 /**

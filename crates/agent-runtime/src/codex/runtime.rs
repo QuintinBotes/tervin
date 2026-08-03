@@ -464,6 +464,7 @@ impl AgentSession for CodexHandle {
             // Codex reads its own AGENTS.md and config, and does not report which files it
             // loaded. Listing a guess here would put unverified paths in the Bridge panel.
             instruction_sources: Vec::new(),
+            cwd: Some(self.inner.cwd.clone()),
         }
     }
 
