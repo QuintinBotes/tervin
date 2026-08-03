@@ -96,7 +96,9 @@ export function ThreadPanel() {
 
   // What was asked for and what is actually running. They differ whenever an alias
   // was used, which is most of the time, and the difference is what it costs.
-  const resolvedModel = thread?.info?.metadata.model ?? null;
+  // Guarded all the way down. A Thread can be observed before its metadata has
+  // arrived, and reaching through a missing one takes the whole panel with it.
+  const resolvedModel = thread?.info?.metadata?.model ?? null;
   const requestedModel = s.activeModel;
   const modelLine =
     resolvedModel && requestedModel && resolvedModel !== requestedModel
@@ -296,7 +298,7 @@ export function ThreadPanel() {
             </div>
           )}
           {caps && <CapabilityStrip caps={caps} />}
-          <HookRuns runs={thread.info?.metadata.hook_runs ?? []} />
+          <HookRuns runs={thread.info?.metadata?.hook_runs ?? []} />
         </div>
       )}
 
@@ -333,10 +335,12 @@ export function ThreadPanel() {
             </span>
           )}
 
-          {/* Model and effort, offered only where the runtime declares them and only
-              before a session exists: both are launch flags, so changing one after a
-              Thread is running would claim an effect it cannot have. */}
-          {!thread?.info?.running && <LaunchPickers profile={profile} />}
+          {/* Model and effort, wherever the runtime declares them. Always shown, even
+              while a Thread runs: they are launch flags, so they apply to the next
+              Thread rather than this one, and hiding them meant the only moment you
+              could not reach the model picker was while watching a Thread use the
+              wrong model. */}
+          <LaunchPickers profile={profile} appliesToNext={!!thread?.info?.running} />
 
           {/* Modes as the running session reported them. Never a hard-coded list:
               Claude Code offers four, an ACP agent offers whatever it defines, and
@@ -555,15 +559,27 @@ export function ThreadPanel() {
  * Model and reasoning effort, chosen before a Thread starts.
  *
  * Every option comes from the adapter, never from a list written here. Both are
- * launch flags rather than session controls, so they are offered only while there
- * is nothing running: a picker that appeared mid-session would imply an effect it
- * cannot deliver.
+ * launch flags rather than session controls, so they take effect when a Thread
+ * starts. They are shown regardless, and say so when a Thread is already running.
+ *
+ * They were once hidden while a Thread ran, on the reasoning that a control which
+ * cannot change the running session should not be offered. The effect was that the
+ * one moment the model picker could not be reached was while watching a Thread run
+ * on the wrong model, with no way to set the next one without abandoning the view.
+ * A control that says what it applies to beats a control that vanishes.
  *
  * The empty value is a real choice, not a placeholder. It means "whatever the
  * profile and the CLI already select", which is different from passing an empty
- * flag, and it is what a user who has not thought about models should get.
+ * flag, and it is what a user who has not thought about models should get. It is
+ * also why a Thread can run on the account's own default: nothing was overridden.
  */
-function LaunchPickers({ profile }: { profile: api.AgentProfile | undefined }) {
+function LaunchPickers({
+  profile,
+  appliesToNext,
+}: {
+  profile: api.AgentProfile | undefined;
+  appliesToNext: boolean;
+}) {
   const s = useWorkspace();
   const options = profile ? s.agents?.launch_options[profile.runtime_id] : undefined;
   const models = options?.models ?? [];
@@ -571,8 +587,11 @@ function LaunchPickers({ profile }: { profile: api.AgentProfile | undefined }) {
 
   if (models.length === 0 && efforts.length === 0) return null;
 
-  const describe = (choices: api.LaunchChoice[], value: string) =>
-    choices.find((c) => c.value === value)?.note ?? undefined;
+  const scope = appliesToNext ? " Applies to the next Thread, not the one running." : "";
+  const describe = (choices: api.LaunchChoice[], value: string) => {
+    const note = choices.find((c) => c.value === value)?.note;
+    return `${note ?? ""}${note ? " " : ""}${scope}`.trim() || undefined;
+  };
 
   return (
     <>
@@ -581,7 +600,10 @@ function LaunchPickers({ profile }: { profile: api.AgentProfile | undefined }) {
           value={models.some((m) => m.value === s.activeModel) ? s.activeModel : ""}
           onChange={(e) => s.setActiveModel(e.target.value)}
           aria-label="Model"
-          title={describe(models, s.activeModel) ?? "Which model this Thread starts with"}
+          title={
+            describe(models, s.activeModel) ??
+            `Which model a Thread starts with.${scope}`
+          }
         >
           {models.map((m) => (
             <option key={m.value} value={m.value} title={m.note ?? undefined}>
@@ -596,7 +618,10 @@ function LaunchPickers({ profile }: { profile: api.AgentProfile | undefined }) {
           value={efforts.some((x) => x.value === s.activeEffort) ? s.activeEffort : ""}
           onChange={(e) => s.setActiveEffort(e.target.value)}
           aria-label="Effort"
-          title={describe(efforts, s.activeEffort) ?? "How much reasoning to spend"}
+          title={
+            describe(efforts, s.activeEffort) ??
+            `How much reasoning to spend.${scope}`
+          }
         >
           {efforts.map((x) => (
             <option key={x.value} value={x.value} title={x.note ?? undefined}>
@@ -604,6 +629,14 @@ function LaunchPickers({ profile }: { profile: api.AgentProfile | undefined }) {
             </option>
           ))}
         </select>
+      )}
+
+      {/* Said plainly, not only in a tooltip: the pickers are visible beside a
+          running Thread they do not govern, and that has to be unambiguous. */}
+      {appliesToNext && (
+        <span className="chip" title="These apply when the next Thread starts">
+          next Thread
+        </span>
       )}
     </>
   );
@@ -621,8 +654,8 @@ function LaunchPickers({ profile }: { profile: api.AgentProfile | undefined }) {
 function ModePicker({ thread }: { thread: ThreadView }) {
   const s = useWorkspace();
   const [busy, setBusy] = useState(false);
-  const modes = thread.info?.metadata.modes ?? [];
-  const current = thread.info?.metadata.permission_mode ?? thread.permissions?.mode ?? "";
+  const modes = thread.info?.metadata?.modes ?? [];
+  const current = thread.info?.metadata?.permission_mode ?? thread.permissions?.mode ?? "";
 
   if (modes.length === 0) return null;
 
