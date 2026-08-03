@@ -967,7 +967,21 @@ export const useWorkspace = create<WorkspaceState & WorkspaceActions>((set, get)
       if (!event.thread_id) return {};
       const existing = s.threads[event.thread_id];
       if (!existing) return {};
+
+      // A proposed plan stops the agent and waits on a person, so it is said out
+      // loud rather than left to be noticed. Deliberately a notice and a badge
+      // rather than switching surface: taking someone off the terminal mid-keystroke
+      // to show them something is worse than telling them it is there.
+      const notices =
+        event.payload.type === "plan.proposed"
+          ? [
+              ...s.notices,
+              "A plan is ready for your decision — open the Plan surface (⌘2).",
+            ]
+          : s.notices;
+
       return {
+        notices,
         threads: {
           ...s.threads,
           [event.thread_id]: { ...existing, events: [...existing.events, event] },
@@ -1145,6 +1159,21 @@ export function activeThreadCount(state: WorkspaceState): number {
 }
 
 /** Threads blocked on the user, which the top bar surfaces. */
+/**
+ * Threads that have proposed a plan and are waiting on a decision.
+ *
+ * A plan is the one moment where changing what an agent is about to do is still
+ * free, and it is worthless if nobody notices it happened. The Plan surface had no
+ * badge, so an agent could finish planning, stop, and wait indefinitely while the
+ * only sign was a tab that looked exactly like it had all session.
+ */
+export function threadsAwaitingPlan(state: WorkspaceState): ThreadView[] {
+  return Object.values(state.threads).filter((t) => {
+    if (t.state !== "waiting_for_permission") return false;
+    return t.events.some((e) => e.payload.type === "plan.proposed");
+  });
+}
+
 export function threadsNeedingUser(state: WorkspaceState): ThreadView[] {
   const needs: api.ThreadState[] = [
     "awaiting_input",
