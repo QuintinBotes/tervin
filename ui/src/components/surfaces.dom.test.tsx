@@ -132,14 +132,40 @@ describe("the Thread's working directory", () => {
   });
 
   it("says where the next Thread will run before one exists", () => {
-    // A Thread runs in the project root, not the focused pane's directory. Someone
-    // who has just cd'd a pane elsewhere would reasonably assume otherwise.
     useWorkspace.setState({
       activeThreadId: null,
       environment: { project_root: "/Users/dev/Projects/tervin" } as unknown as api.ShellEnvironment,
     });
     const { getByText } = render(<ThreadPanel />);
     expect(getByText(/next Thread runs in/)).toBeTruthy();
+  });
+
+  it("follows the focused pane rather than the project root", () => {
+    // The terminal is the context the user is working in. It also has to match
+    // `@path` completion, which already resolves against the pane's directory —
+    // otherwise a completed path means one file in the composer and another in
+    // the Thread.
+    useWorkspace.setState({
+      activeThreadId: null,
+      environment: { project_root: "/Users/dev/Projects/tervin" } as unknown as api.ShellEnvironment,
+      activeTabId: "tab1",
+      tabs: [
+        { id: "tab1", title: "t", root: null, activePaneId: "pane1", zoomedPaneId: null },
+      ] as unknown as ReturnType<typeof useWorkspace.getState>["tabs"],
+      panes: {
+        pane1: {
+          id: "pane1",
+          title: "Shell",
+          cwd: "/Users/dev/Projects/tervin/crates/block-engine",
+          threadId: null,
+          exited: false,
+          exitCode: null,
+        },
+      },
+    });
+    const { getByText } = render(<ThreadPanel />);
+    // The pane's directory wins, and the project root is not what is offered.
+    expect(getByText(/block-engine/)).toBeTruthy();
   });
 });
 
