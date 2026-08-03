@@ -409,6 +409,9 @@ fn a_pane_is_not_a_continuation_of_an_agent_session() {
     unsafe {
         std::env::set_var("CLAUDE_CODE_CHILD_SESSION", "1");
         std::env::set_var("CLAUDECODE", "1");
+        // The build tool that launched Tervin leaks these the same way.
+        std::env::set_var("npm_lifecycle_event", "app");
+        std::env::set_var("INIT_CWD", "/somewhere/else");
     }
 
     let marker = only_in_output("child-marker");
@@ -416,7 +419,7 @@ fn a_pane_is_not_a_continuation_of_an_agent_session() {
         "/bin/sh",
         &[],
         &[&format!(
-            "echo {}${{CLAUDE_CODE_CHILD_SESSION:-none}}-${{CLAUDECODE:-none}}\n",
+            "echo {}${{CLAUDE_CODE_CHILD_SESSION:-none}}-${{CLAUDECODE:-none}}-${{npm_lifecycle_event:-none}}-${{INIT_CWD:-none}}\n",
             marker
         )],
         |text| text.contains("child-marker"),
@@ -424,7 +427,7 @@ fn a_pane_is_not_a_continuation_of_an_agent_session() {
     let text = plain(&collected.text);
 
     assert!(
-        text.contains("child-marker") && text.contains("none-none"),
-        "the pane inherited an agent-session marker:\n{text}"
+        text.contains("child-marker") && text.contains("none-none-none-none"),
+        "the pane inherited state from whatever launched Tervin:\n{text}"
     );
 }
