@@ -99,6 +99,8 @@ beforeEach(() => {
     agentsDiscovery: null,
     activeModel: "",
     activeEffort: "",
+    activeMode: "",
+    activeCwd: null,
   });
 });
 
@@ -131,13 +133,32 @@ describe("the Thread's working directory", () => {
     expect(getByTitle("/Users/dev/Projects/tervin/crates/tervin-app")).toBeTruthy();
   });
 
-  it("says where the next Thread will run before one exists", () => {
+  it("says where the next Thread will run, as something you can change", () => {
+    // Not just a label. Before this the directory was inferred and unreachable:
+    // no way to see it without starting a Thread, and no way to set it at all.
     useWorkspace.setState({
       activeThreadId: null,
+      activeCwd: null,
       environment: { project_root: "/Users/dev/Projects/tervin" } as unknown as api.ShellEnvironment,
     });
-    const { getByText } = render(<ThreadPanel />);
-    expect(getByText(/next Thread runs in/)).toBeTruthy();
+    const { getByRole } = render(<ThreadPanel />);
+    const button = getByRole("button", { name: /tervin/ });
+    expect(button.title).toContain("/Users/dev/Projects/tervin");
+    expect(button.title).toContain("Following the focused pane");
+  });
+
+  it("says when the directory is pinned rather than following the pane", () => {
+    // A directory that silently follows something else is fine. One that follows
+    // something else without saying so is how an agent works in the wrong repo.
+    useWorkspace.setState({
+      activeThreadId: null,
+      activeCwd: "/Users/dev/Projects/other",
+      environment: { project_root: "/Users/dev/Projects/tervin" } as unknown as api.ShellEnvironment,
+    });
+    const { getByRole, getByText } = render(<ThreadPanel />);
+    expect(getByRole("button", { name: /other/ }).title).toContain("Pinned");
+    // And a way back, or pinning would be a one-way door.
+    expect(getByText("unpin")).toBeTruthy();
   });
 
   it("follows the focused pane rather than the project root", () => {
@@ -163,9 +184,9 @@ describe("the Thread's working directory", () => {
         },
       },
     });
-    const { getByText } = render(<ThreadPanel />);
+    const { getByRole } = render(<ThreadPanel />);
     // The pane's directory wins, and the project root is not what is offered.
-    expect(getByText(/block-engine/)).toBeTruthy();
+    expect(getByRole("button", { name: /block-engine/ })).toBeTruthy();
   });
 });
 
