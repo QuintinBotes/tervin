@@ -809,6 +809,13 @@ pub async fn audit_recent(
 pub struct AgentsOverview {
     pub profiles: Vec<AgentProfile>,
     pub default_profile: Option<String>,
+    /// What each runtime accepts at launch, keyed by runtime id.
+    ///
+    /// Carried here rather than with discovery because the composer draws these
+    /// controls before anything has been probed, and a control that only appears
+    /// once a subprocess finishes is one the user will not find. It is also free:
+    /// every adapter declares this statically.
+    pub launch_options: std::collections::BTreeMap<String, agent_runtime::LaunchOptions>,
     /// Where the files the UI mentions actually are.
     ///
     /// Resolved rather than written into the interface, because the location differs by
@@ -830,9 +837,19 @@ pub struct AgentsDiscovery {
 #[tauri::command]
 pub async fn agents_overview(state: State<'_, Arc<AppState>>) -> Result<AgentsOverview> {
     let profiles = state.profiles.read().clone();
+    // Static declarations, so this stays a lock and a map with nothing spawned.
+    let launch_options = state
+        .agents
+        .read()
+        .snapshot()
+        .into_iter()
+        .map(|a| (a.runtime_id().to_string(), a.launch_options()))
+        .collect();
+
     Ok(AgentsOverview {
         default_profile: profiles.default_profile,
         profiles: profiles.profiles,
+        launch_options,
         profiles_path: tervin_core::paths::abbreviate(&ProfileConfig::path()),
         mcp_path: tervin_core::paths::abbreviate(&agent_runtime::McpConfig::path()),
     })
@@ -1077,6 +1094,8 @@ pub struct ThreadStartRequest {
     #[serde(default)]
     pub attachments: Vec<Attachment>,
     pub model: Option<String>,
+    /// Reasoning effort, where the runtime offers it.
+    pub effort: Option<String>,
     pub permission_mode: Option<String>,
     pub task_title: Option<String>,
     /// Resume a previous session by its runtime-issued id.
@@ -1125,7 +1144,13 @@ pub async fn thread_start(
     let mut config = LaunchConfig::new(thread_id.clone(), cwd.clone());
     config.prompt = Some(request.prompt.clone());
     config.attachments = request.attachments;
-    config.model = request.model.or_else(|| profile.model.clone());
+    // An empty selection means "whatever the profile or the CLI already chooses",
+    // which is not the same as passing an empty flag value.
+    config.model = request
+        .model
+        .filter(|m| !m.trim().is_empty())
+        .or_else(|| profile.model.clone());
+    config.effort = request.effort.filter(|e| !e.trim().is_empty());
     config.permission_mode = request
         .permission_mode
         .or_else(|| profile.permission_mode.clone());
