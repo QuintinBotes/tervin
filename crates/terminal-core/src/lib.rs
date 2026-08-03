@@ -6,6 +6,7 @@
 //! not interpret the screen, and it does not decide what a Block is — that
 //! belongs to `block-engine`, which consumes the signals emitted here.
 
+pub mod completion;
 pub mod osc;
 pub mod pty;
 pub mod registry;
