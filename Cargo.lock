@@ -4492,6 +4492,7 @@ dependencies = [
  "base64 0.23.0",
  "chrono",
  "criterion",
+ "libc",
  "parking_lot",
  "portable-pty",
  "serde",
