@@ -387,7 +387,7 @@ impl PermissionArbiter for TervinArbiter {
                 .to_string(),
             _ => format!(
                 "{tool_name} {}",
-                agent_runtime::claude::normalize::summarise_tool_input(tool_name, input)
+                agent_runtime::claude::normalize::summarise_tool_input(tool_name, input, cwd)
             ),
         };
 
