@@ -202,13 +202,75 @@ fn parse_osc7(rest: &[u8]) -> Option<ShellSignal> {
         return None;
     }
     Some(ShellSignal::Cwd {
-        host: if host.is_empty() {
-            None
-        } else {
-            Some(host.to_string())
-        },
+        host: remote_host(host),
         path,
     })
+}
+
+/// The host in an `OSC 7`, but only when it is somewhere else.
+///
+/// `Some` has to mean *remote*, because that is what every consumer uses it for:
+/// a remote path does not exist locally, so Tervin declines to record it, to `cd`
+/// into it, or to point a Thread at it.
+///
+/// The shells announce a hostname rather than nothing — zsh sets `$HOST`, and the
+/// integration falls back to `localhost` — so a bare "is it empty" test classified
+/// every local `cd` on this machine as remote. Nothing was recorded, the pane's
+/// directory never moved from where it was spawned, and the Thread that follows
+/// the focused pane followed a value that never changed.
+///
+/// Comparing against the local hostname is what OSC 7 is specified for and what
+/// other terminals do with it.
+fn remote_host(host: &str) -> Option<String> {
+    if host.is_empty()
+        || host.eq_ignore_ascii_case("localhost")
+        || host == "127.0.0.1"
+        || host == "::1"
+    {
+        return None;
+    }
+    // Compared without the domain on either side: `foo` and `foo.local` are one
+    // machine, and the shells disagree about which of the two they report.
+    let short = host.split('.').next().unwrap_or(host);
+    if local_hostname().is_some_and(|local| local.eq_ignore_ascii_case(short)) {
+        return None;
+    }
+    Some(host.to_string())
+}
+
+/// This machine's hostname, looked up once.
+///
+/// Cached because it cannot change usefully within a session and this is called
+/// from the PTY pump, which is on the path of every byte the terminal receives.
+fn local_hostname() -> Option<&'static str> {
+    static HOSTNAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    HOSTNAME
+        .get_or_init(|| {
+            #[cfg(unix)]
+            {
+                let mut buf = [0i8; 256];
+                // SAFETY: `gethostname` writes at most `len` bytes into the buffer,
+                // which is owned here and outlives the call.
+                let ok = unsafe { libc::gethostname(buf.as_mut_ptr(), buf.len()) } == 0;
+                if !ok {
+                    return None;
+                }
+                let bytes: Vec<u8> = buf
+                    .iter()
+                    .take_while(|c| **c != 0)
+                    .map(|c| *c as u8)
+                    .collect();
+                let name = String::from_utf8(bytes).ok()?;
+                // `foo.local` and `foo` are the same machine, and the shells differ
+                // on which they report.
+                Some(name.split('.').next().unwrap_or(&name).to_string())
+            }
+            #[cfg(not(unix))]
+            {
+                None
+            }
+        })
+        .as_deref()
 }
 
 /// `OSC 8 ; params ; uri` — params may carry `id=…`.
@@ -419,12 +481,68 @@ mod tests {
     #[test]
     fn parses_cwd_with_host_and_percent_escapes() {
         assert_eq!(
-            parse(b"7;file://mac.local/Users/dev/my%20project"),
+            parse(b"7;file://some-other-box/Users/dev/my%20project"),
             Some(ShellSignal::Cwd {
-                host: Some("mac.local".to_string()),
+                host: Some("some-other-box".to_string()),
                 path: "/Users/dev/my project".to_string()
             })
         );
+    }
+
+    #[test]
+    fn a_cwd_on_this_machine_is_not_a_remote_one() {
+        // The bug this exists for. `Some(host)` means *remote* to every consumer:
+        // a remote path is not recorded, not offered to `cd` into, and not used as
+        // a Thread's directory. The shells announce a hostname rather than nothing
+        // — zsh sets `$HOST`, and the integration falls back to `localhost` — so a
+        // bare emptiness test classified every local `cd` as remote. Nothing was
+        // recorded, the pane's directory never moved from where it was spawned,
+        // and a Thread following the focused pane followed a value frozen at spawn.
+        for host in ["", "localhost", "LOCALHOST", "127.0.0.1", "::1"] {
+            let osc = format!("7;file://{host}/Users/dev/proj");
+            assert_eq!(
+                parse(osc.as_bytes()),
+                Some(ShellSignal::Cwd {
+                    host: None,
+                    path: "/Users/dev/proj".to_string()
+                }),
+                "{host:?} is this machine"
+            );
+        }
+    }
+
+    #[test]
+    fn this_machines_own_hostname_is_local() {
+        // What zsh actually sends, and the case that broke it in practice.
+        let Some(local) = super::local_hostname() else {
+            return;
+        };
+        let osc = format!("7;file://{local}/Users/dev/proj");
+        assert_eq!(
+            parse(osc.as_bytes()),
+            Some(ShellSignal::Cwd {
+                host: None,
+                path: "/Users/dev/proj".to_string()
+            })
+        );
+
+        // And with the domain suffix, since the shells disagree about which they
+        // report for the same machine.
+        let osc = format!("7;file://{local}.local/Users/dev/proj");
+        assert!(matches!(
+            parse(osc.as_bytes()),
+            Some(ShellSignal::Cwd { host: None, .. })
+        ));
+    }
+
+    #[test]
+    fn a_genuinely_remote_cwd_is_still_remote() {
+        // The other half. Over SSH the path does not exist locally, and treating it
+        // as local would point completion, `cd` and a Thread at nothing.
+        assert!(matches!(
+            parse(b"7;file://build-server-07/srv/app"),
+            Some(ShellSignal::Cwd { host: Some(h), .. }) if h == "build-server-07"
+        ));
     }
 
     #[test]
