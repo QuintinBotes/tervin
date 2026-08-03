@@ -485,13 +485,42 @@ select:focus {
   transition: background var(--motion-fast) var(--ease);
 }
 
+/*
+ * A 5px line is the right thing to *see* and the wrong thing to *hit*.
+ *
+ * The divider was reported as not resizing at all. It resized correctly; the
+ * target was five pixels wide, which is below what a hand with a trackpad lands
+ * on reliably, so the drag mostly started on a panel instead and nothing moved.
+ *
+ * The pseudo-element widens the grab area to 15px without thickening the line.
+ * Events on a pseudo-element are delivered to its host, so the existing pointer
+ * handler needs no change.
+ */
 .handle-col {
   width: var(--handle-w);
+  cursor: col-resize;
+  position: relative;
+}
+
+.handle-col::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline: -5px;
   cursor: col-resize;
 }
 
 .handle-row {
   height: var(--handle-w);
+  cursor: row-resize;
+  position: relative;
+}
+
+.handle-row::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block: -5px;
   cursor: row-resize;
 }
 
