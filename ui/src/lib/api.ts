@@ -295,9 +295,30 @@ export interface ImportCandidate {
  * can fail, and when the two travelled together a failed probe meant a user with five
  * configured profiles was told they had none.
  */
+/** One option in a launch control, exactly as the adapter defines it. */
+export interface LaunchChoice {
+  value: string;
+  label: string;
+  note?: string | null;
+}
+
+/**
+ * What a runtime accepts at launch.
+ *
+ * Never assembled in the UI. A control offering a choice the runtime would reject
+ * is worse than one offering none, so the adapter that drives the runtime is the
+ * only thing that says what it takes. An empty list hides the control.
+ */
+export interface LaunchOptions {
+  models: LaunchChoice[];
+  efforts: LaunchChoice[];
+}
+
 export interface AgentsOverview {
   profiles: AgentProfile[];
   default_profile: string | null;
+  /** Keyed by runtime id. Present on this call because the composer draws before any probe. */
+  launch_options: Record<string, LaunchOptions>;
   /** Resolved paths, because they differ by platform. Never hard-code them. */
   profiles_path: string;
   mcp_path: string;
@@ -789,6 +810,7 @@ export interface ThreadStartRequest {
   prompt: string;
   attachments?: Record<string, unknown>[];
   model?: string | null;
+  effort?: string | null;
   permission_mode?: string | null;
   task_title?: string | null;
   resume_id?: string | null;
