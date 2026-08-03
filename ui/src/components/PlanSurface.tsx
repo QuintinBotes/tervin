@@ -99,8 +99,11 @@ export function PlanSurface({ narrow }: { narrow: boolean }) {
         {thread.capabilities?.plan_mode.level === "supported" ? (
           <>
             {" "}
-            This runtime supports plan mode — ask it to plan first, or switch the
-            Thread to plan mode from the composer.
+            This runtime supports plan mode, but a plan only appears if the Thread
+            was <strong>started</strong> in it: an agent proposes one by calling
+            `ExitPlanMode`, and it only does that when planning was the mode it
+            began with. Switching mode now will not produce one. Start a new Thread
+            with <strong>Start mode: Plan</strong> in the composer.
           </>
         ) : (
           <>
@@ -155,6 +158,31 @@ export function PlanSurface({ narrow }: { narrow: boolean }) {
           .join("\n"),
         [],
       );
+    } catch (e) {
+      s.pushNotice(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Tell the agent to proceed as planned.
+   *
+   * Plan mode stops the agent and waits, and until now nothing in this surface
+   * said so or offered a way to release it. The only control sent a *revision* and
+   * was disabled until a step had been edited, so agreeing with a plan left you
+   * with no button at all and no indication that the Thread was blocked on you.
+   *
+   * Sent as a turn rather than as a protocol approval, because that is what the
+   * runtime is actually waiting for and it keeps the record honest: the transcript
+   * shows what was said, not an approval Tervin invented.
+   */
+  async function approve() {
+    const live = s.activeThreadId ? s.threads[s.activeThreadId] : null;
+    if (!live?.info?.running) return;
+    setBusy(true);
+    try {
+      await api.threadSend(live.id, "Approved. Go ahead with this plan.", []);
     } catch (e) {
       s.pushNotice(describeError(e));
     } finally {
@@ -264,22 +292,44 @@ export function PlanSurface({ narrow }: { narrow: boolean }) {
               flexWrap: "wrap",
             }}
           >
+            {/* The plan is a decision point, so the decisions are the controls.
+                Previously the only button sent a *revision* and was disabled until
+                something had been edited — so a plan you simply agreed with offered
+                nothing to press, and the surface gave no clue what happened next. */}
             <button
               className="btn btn-primary"
+              disabled={busy || !thread.info?.running}
+              onClick={() => void approve()}
+              title={
+                thread.info?.running
+                  ? "Tell the agent to go ahead with this plan"
+                  : "The Thread is not running"
+              }
+            >
+              {busy ? "Sending…" : "Approve and continue"}
+            </button>
+            <button
+              className="btn"
               disabled={busy || !edited || !thread.info?.running}
               onClick={() => void sendRevision()}
               title={
-                thread.info?.running
-                  ? "Send the revised plan to the agent"
-                  : "The Thread is not running"
+                edited
+                  ? "Send the reordered plan back to the agent"
+                  : "Reorder, edit or skip a step first"
               }
             >
               {busy ? "Sending…" : "Send revised plan"}
             </button>
             <span className="meta grow" style={{ textWrap: "pretty" }}>
+              {thread.info?.running
+                ? // Says what the agent is doing right now, because "waiting" and
+                  // "finished" look identical in a panel full of steps.
+                  "The agent is waiting on this. Approve it, revise the steps first, or hand the plan to another agent from the Thread header."
+                : "This Thread has ended. The plan is kept as a record; start a new Thread to act on it."}
+              {" "}
               {/* Never imply Tervin controls the runtime. */}
-              Edits here are a proposal. Tervin cannot make a runtime follow a
-              reordered plan — it asks.
+              Edits here are a proposal: Tervin cannot make a runtime follow a
+              reordered plan, it asks.
             </span>
           </div>
         </div>

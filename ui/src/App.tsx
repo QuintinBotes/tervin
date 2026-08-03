@@ -29,6 +29,7 @@ import {
   activeThreadCount,
   describeError,
   overlayOpen,
+  threadsAwaitingPlan,
   threadsNeedingUser,
   useWorkspace,
   type Surface,
@@ -639,6 +640,7 @@ function TopBar({ keymap, waitingCount }: { keymap: Keymap; waitingCount: number
   const [profileOpen, setProfileOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const active = activeThreadCount(s);
+  const awaitingPlan = threadsAwaitingPlan(s).length;
   const git = s.gitStatus;
   const profile = s.agents?.profiles.find((p) => p.id === s.activeProfileId);
   const changed = git?.files.filter((f) => f.stage !== "untracked").length ?? 0;
@@ -703,6 +705,18 @@ function TopBar({ keymap, waitingCount }: { keymap: Keymap; waitingCount: number
             onClick={() => s.setSurface(surface.id)}
           >
             {surface.label}
+            {/* A plan is a decision the agent has stopped and is waiting on. Marked
+                the same way as the other surfaces that want something, because a
+                waiting plan with no badge is indistinguishable from no plan. */}
+            {surface.id === "plan" && awaitingPlan > 0 && (
+              <span
+                className="mono tabular tone-amber"
+                style={{ fontSize: "var(--text-tag)" }}
+                title="A plan is waiting for your decision"
+              >
+                {awaitingPlan}
+              </span>
+            )}
             {surface.id === "agents" && active > 0 && (
               <span className="mono dim tabular" style={{ fontSize: "var(--text-tag)" }}>
                 {active}
