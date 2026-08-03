@@ -626,8 +626,8 @@ export const blocksQuery = (filter: BlockFilter) =>
 export const blockGet = (blockId: string) =>
   invoke<Block | null>("block_get", { blockId });
 
-export const blockOutput = (blockId: string) =>
-  invoke<number[]>("block_output", { blockId }).then((b) => Uint8Array.from(b));
+/** Full output, already stripped of escape sequences by the same routine as the preview. */
+export const blockOutput = (blockId: string) => invoke<string>("block_output", { blockId });
 
 export const blockSetBookmark = (blockId: string, bookmarked: boolean) =>
   invoke<void>("block_set_bookmark", { blockId, bookmarked });
