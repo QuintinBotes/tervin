@@ -592,7 +592,7 @@ impl Normalizer {
             .or_else(|| input.get("notebook_path"))
             .and_then(Value::as_str)
             .map(String::from);
-        let summary = summarise_tool_input(&name, &input);
+        let summary = summarise_tool_input(&name, &input, &self.cwd);
 
         self.pending_tools.insert(
             id.clone(),
@@ -662,7 +662,7 @@ impl Normalizer {
                 self.transition(ThreadState::Reading, out);
                 if let Some(p) = path {
                     out.push(self.event_with_links(
-                        format!("Read {}", short_path(&p)),
+                        format!("Read {}", short_path(&p, &self.cwd)),
                         EventPayload::FileRead {
                             path: p.clone(),
                             lines: input.get("limit").and_then(Value::as_u64).map(|n| n as u32),
@@ -688,7 +688,7 @@ impl Normalizer {
                         FileChangeKind::Modified
                     };
                     out.push(self.event_with_links(
-                        format!("Proposed change to {}", short_path(&p)),
+                        format!("Proposed change to {}", short_path(&p, &self.cwd)),
                         EventPayload::PatchProposed {
                             files: vec![FileChange {
                                 path: p.clone(),
@@ -951,7 +951,7 @@ impl Normalizer {
                             FileChangeKind::Modified
                         };
                         out.push(self.event_with_links(
-                            format!("Changed {}", short_path(&p)),
+                            format!("Changed {}", short_path(&p, &self.cwd)),
                             EventPayload::PatchApplied {
                                 files: vec![FileChange {
                                     path: p.clone(),
@@ -1020,7 +1020,7 @@ impl Normalizer {
                     .unwrap_or("tool");
                 let detail = denial
                     .get("tool_input")
-                    .map(|i| summarise_tool_input(tool, i))
+                    .map(|i| summarise_tool_input(tool, i, &self.cwd))
                     .unwrap_or_default();
                 self.denials.push(format!("{tool}: {detail}"));
                 out.push(self.event(
@@ -1286,14 +1286,19 @@ fn string_array(value: Option<&Value>) -> Vec<String> {
 /// A compact, human-readable rendering of a tool's arguments.
 ///
 /// Never a raw JSON dump in the common cases: a timeline row has to be scannable.
-pub fn summarise_tool_input(name: &str, input: &Value) -> String {
+/// A one-line rendering of a tool's arguments.
+///
+/// `cwd` is the Thread's working directory, so file paths read as they do inside
+/// the project. Pass an empty string where there is no directory to relate them
+/// to; the path is then shown in full, which is the honest fallback.
+pub fn summarise_tool_input(name: &str, input: &Value, cwd: &str) -> String {
     let s = |k: &str| input.get(k).and_then(Value::as_str);
 
     match name {
         "Bash" | "BashOutput" => s("command").map(|c| first_line(c, 160).to_string()),
-        "Read" | "Write" | "Edit" | "MultiEdit" | "NotebookEdit" | "NotebookRead" => {
-            s("file_path").or(s("notebook_path")).map(short_path)
-        }
+        "Read" | "Write" | "Edit" | "MultiEdit" | "NotebookEdit" | "NotebookRead" => s("file_path")
+            .or(s("notebook_path"))
+            .map(|p| short_path(p, cwd)),
         "Glob" => s("pattern").map(String::from),
         "Grep" => s("pattern").map(|p| format!("/{p}/")),
         "WebFetch" | "WebSearch" => s("url").or(s("query")).map(String::from),
@@ -1391,14 +1396,29 @@ fn truncate(text: &str, max: usize) -> String {
 }
 
 /// Shorten a path for display, keeping the last two components.
-fn short_path(path: impl AsRef<str>) -> String {
+/// A path as it reads inside the project, rather than its last two segments.
+///
+/// Taking the last two regardless of depth made one project look like several:
+/// a real session showed `src/inventory.py` beside `tervin-testbed/README.md`,
+/// which are a nested file and a root file in the same repository. The second is
+/// wearing the name of the directory that contains the whole project, so nothing
+/// about the pair says they are neighbours.
+///
+/// Relative to the Thread's working directory when the path is inside it, which is
+/// how anyone reading a diff or a stack trace expects to see it. Outside it, the
+/// path is left absolute — that is genuinely news, and shortening it would hide the
+/// one case worth noticing.
+fn short_path(path: impl AsRef<str>, cwd: &str) -> String {
     let path = path.as_ref();
-    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
-    match parts.len() {
-        0 => path.to_string(),
-        1 => parts[0].to_string(),
-        n => format!("{}/{}", parts[n - 2], parts[n - 1]),
+    if !cwd.is_empty() {
+        let base = cwd.trim_end_matches('/');
+        if let Some(rest) = path.strip_prefix(base).and_then(|r| r.strip_prefix('/')) {
+            if !rest.is_empty() {
+                return rest.to_string();
+            }
+        }
     }
+    path.to_string()
 }
 
 #[cfg(test)]
@@ -1961,6 +1981,42 @@ mod tests {
     }
 
     #[test]
+    fn paths_read_as_they_do_inside_the_project() {
+        // The reported case, from a real session: `src/inventory.py` beside
+        // `tervin-testbed/README.md`. Both are in one repository — one nested, one
+        // at the root — and taking the last two segments regardless of depth made
+        // the root file wear the name of the directory holding the whole project,
+        // so nothing about the pair said they were neighbours.
+        let cwd = "/Users/dev/tervin-testbed";
+        assert_eq!(
+            short_path("/Users/dev/tervin-testbed/src/inventory.py", cwd),
+            "src/inventory.py"
+        );
+        assert_eq!(
+            short_path("/Users/dev/tervin-testbed/README.md", cwd),
+            "README.md"
+        );
+        assert_eq!(
+            short_path("/Users/dev/tervin-testbed/a/b/c/deep.rs", cwd),
+            "a/b/c/deep.rs",
+            "depth is not truncated: a relative path is already short, and cutting \
+             it loses the part that identifies the file"
+        );
+    }
+
+    #[test]
+    fn a_path_outside_the_project_stays_absolute() {
+        // Genuinely news. An agent reading outside the directory it was given is
+        // worth noticing, and abbreviating it would hide the one case that matters.
+        assert_eq!(short_path("/etc/hosts", "/Users/dev/proj"), "/etc/hosts");
+        // A directory that merely shares a prefix is not inside it.
+        assert_eq!(
+            short_path("/Users/dev/proj-other/x.rs", "/Users/dev/proj"),
+            "/Users/dev/proj-other/x.rs"
+        );
+    }
+
+    #[test]
     fn a_working_subagent_is_reported_rather_than_discarded() {
         // The case this exists for. A `Task` hands off to a subagent that can read
         // twenty files over several minutes, and every one of those was thrown away
@@ -2186,20 +2242,27 @@ mod tests {
     #[test]
     fn tool_summaries_are_readable_not_json_dumps() {
         assert_eq!(
-            summarise_tool_input("Bash", &serde_json::json!({"command": "ls -la"})),
+            summarise_tool_input("Bash", &serde_json::json!({"command": "ls -la"}), ""),
             "ls -la"
         );
         assert_eq!(
-            summarise_tool_input("Read", &serde_json::json!({"file_path": "/a/b/c/d.rs"})),
+            summarise_tool_input(
+                "Read",
+                &serde_json::json!({"file_path": "/a/b/c/d.rs"}),
+                "/a/b"
+            ),
             "c/d.rs"
         );
         assert_eq!(
-            summarise_tool_input("Grep", &serde_json::json!({"pattern": "TODO"})),
+            summarise_tool_input("Grep", &serde_json::json!({"pattern": "TODO"}), ""),
             "/TODO/"
         );
         // An unknown tool still yields something bounded.
-        let unknown =
-            summarise_tool_input("mcp__thing__do", &serde_json::json!({"a": "x".repeat(500)}));
+        let unknown = summarise_tool_input(
+            "mcp__thing__do",
+            &serde_json::json!({"a": "x".repeat(500)}),
+            "",
+        );
         assert!(unknown.chars().count() <= 161);
     }
 
