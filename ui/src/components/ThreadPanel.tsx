@@ -94,6 +94,15 @@ export function ThreadPanel() {
   const profiles = s.agents?.profiles ?? [];
   const profile = profiles.find((p) => p.id === s.activeProfileId) ?? profiles[0];
 
+  // What was asked for and what is actually running. They differ whenever an alias
+  // was used, which is most of the time, and the difference is what it costs.
+  const resolvedModel = thread?.info?.metadata.model ?? null;
+  const requestedModel = s.activeModel;
+  const modelLine =
+    resolvedModel && requestedModel && resolvedModel !== requestedModel
+      ? `${requestedModel} → ${resolvedModel}`
+      : (resolvedModel ?? (requestedModel || null));
+
   // Poll live session facts while a Thread is working. Metadata such as cost and
   // MCP state is push-free on the runtime side, so it is pulled at a low rate
   // rather than on every event.
@@ -178,6 +187,8 @@ export function ThreadPanel() {
           profile_id: profile?.id ?? null,
           prompt: text,
           attachments,
+          model: s.activeModel || null,
+          effort: s.activeEffort || null,
           task_title: text.slice(0, 80),
         });
         s.clearAttachments();
@@ -321,6 +332,11 @@ export function ThreadPanel() {
               {profile.badge ?? "shared"} account
             </span>
           )}
+
+          {/* Model and effort, offered only where the runtime declares them and only
+              before a session exists: both are launch flags, so changing one after a
+              Thread is running would claim an effect it cannot have. */}
+          {!thread?.info?.running && <LaunchPickers profile={profile} />}
 
           {/* Modes as the running session reported them. Never a hard-coded list:
               Claude Code offers four, an ACP agent offers whatever it defines, and
@@ -518,8 +534,12 @@ export function ThreadPanel() {
         )}
 
         <div className="row" style={{ marginTop: "var(--sp-2)" }}>
-          <span className="meta grow">
+          <span className="meta truncate grow">
             {profile ? `${profile.name} · ${profile.runtime_id}` : "No agent profile configured"}
+            {/* An alias is not what runs. `opus` resolves to whichever model is
+                current, and which one that is decides what the Thread costs, so
+                once the session says what it actually got, that is shown too. */}
+            {modelLine && ` · ${modelLine}`}
           </span>
           <button className="btn btn-primary" onClick={() => void send()} disabled={busy || !prompt.trim()}>
             {busy ? "Working…" : thread?.info?.running ? "Send" : "Start Thread"}
@@ -528,6 +548,64 @@ export function ThreadPanel() {
       </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Model and reasoning effort, chosen before a Thread starts.
+ *
+ * Every option comes from the adapter, never from a list written here. Both are
+ * launch flags rather than session controls, so they are offered only while there
+ * is nothing running: a picker that appeared mid-session would imply an effect it
+ * cannot deliver.
+ *
+ * The empty value is a real choice, not a placeholder. It means "whatever the
+ * profile and the CLI already select", which is different from passing an empty
+ * flag, and it is what a user who has not thought about models should get.
+ */
+function LaunchPickers({ profile }: { profile: api.AgentProfile | undefined }) {
+  const s = useWorkspace();
+  const options = profile ? s.agents?.launch_options[profile.runtime_id] : undefined;
+  const models = options?.models ?? [];
+  const efforts = options?.efforts ?? [];
+
+  if (models.length === 0 && efforts.length === 0) return null;
+
+  const describe = (choices: api.LaunchChoice[], value: string) =>
+    choices.find((c) => c.value === value)?.note ?? undefined;
+
+  return (
+    <>
+      {models.length > 0 && (
+        <select
+          value={models.some((m) => m.value === s.activeModel) ? s.activeModel : ""}
+          onChange={(e) => s.setActiveModel(e.target.value)}
+          aria-label="Model"
+          title={describe(models, s.activeModel) ?? "Which model this Thread starts with"}
+        >
+          {models.map((m) => (
+            <option key={m.value} value={m.value} title={m.note ?? undefined}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {efforts.length > 0 && (
+        <select
+          value={efforts.some((x) => x.value === s.activeEffort) ? s.activeEffort : ""}
+          onChange={(e) => s.setActiveEffort(e.target.value)}
+          aria-label="Effort"
+          title={describe(efforts, s.activeEffort) ?? "How much reasoning to spend"}
+        >
+          {efforts.map((x) => (
+            <option key={x.value} value={x.value} title={x.note ?? undefined}>
+              {x.label}
+            </option>
+          ))}
+        </select>
+      )}
+    </>
   );
 }
 

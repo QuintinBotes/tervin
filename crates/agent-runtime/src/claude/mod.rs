@@ -85,6 +85,48 @@ pub fn permission_modes() -> Vec<crate::runtime::SessionMode> {
     ]
 }
 
+/// The models offered, as aliases rather than pinned identifiers.
+///
+/// `claude --help` documents these as "an alias for the latest model", so the CLI
+/// resolves each to whatever is current. Pinning `claude-opus-4-1-20250805` here
+/// would mean shipping a list that silently rots: every new model would need a
+/// Tervin release, and worse, a stale entry names a model that still exists and so
+/// fails by quietly running the wrong one rather than by erroring.
+///
+/// The resolved name is reported back by the session and shown alongside, because
+/// the alias is not what runs and the difference is what costs money.
+pub fn model_choices() -> Vec<crate::runtime::LaunchChoice> {
+    use crate::runtime::LaunchChoice;
+    vec![
+        LaunchChoice::new("", "Profile default")
+            .with_note("Whatever the profile or the CLI's own configuration selects."),
+        LaunchChoice::new("opus", "Opus").with_note("Most capable, and the most expensive."),
+        LaunchChoice::new("sonnet", "Sonnet").with_note("The general-purpose balance."),
+        LaunchChoice::new("fable", "Fable"),
+        LaunchChoice::new("haiku", "Haiku").with_note("Fastest and cheapest."),
+    ]
+}
+
+/// The reasoning-effort levels the CLI accepts.
+///
+/// Unlike the models, this list has to be exact. An unrecognised `--effort` value
+/// is a *warning*, not an error: the CLI prints one line, falls back to the default
+/// and runs anyway. A typo would therefore produce a session that looks like it is
+/// running at the requested effort and is not, which is precisely the class of
+/// silent mismatch Tervin exists to make visible. These five are the values the
+/// shipped binary names when it rejects one.
+pub fn effort_choices() -> Vec<crate::runtime::LaunchChoice> {
+    use crate::runtime::LaunchChoice;
+    vec![
+        LaunchChoice::new("", "Default effort"),
+        LaunchChoice::new("low", "Low").with_note("Least thinking, least cost."),
+        LaunchChoice::new("medium", "Medium"),
+        LaunchChoice::new("high", "High"),
+        LaunchChoice::new("xhigh", "Extra high"),
+        LaunchChoice::new("max", "Max").with_note("Most thinking, and the slowest."),
+    ]
+}
+
 /// Shared state between the session handle and its reader task.
 struct Shared {
     normalizer: Mutex<Normalizer>,
@@ -299,6 +341,10 @@ impl ClaudeCodeRuntime {
         if let Some(model) = &config.model {
             args.push("--model".into());
             args.push(model.clone());
+        }
+        if let Some(effort) = &config.effort {
+            args.push("--effort".into());
+            args.push(effort.clone());
         }
         let mode = config
             .permission_mode
@@ -540,6 +586,13 @@ impl AgentRuntime for ClaudeCodeRuntime {
 
     fn capabilities(&self) -> Capabilities {
         Self::static_capabilities()
+    }
+
+    fn launch_options(&self) -> crate::runtime::LaunchOptions {
+        crate::runtime::LaunchOptions {
+            models: model_choices(),
+            efforts: effort_choices(),
+        }
     }
 
     async fn launch(&self, config: LaunchConfig) -> Result<LaunchedSession> {
@@ -1075,6 +1128,63 @@ mod tests {
             .position(|a| a == "--resume")
             .expect("no --resume");
         assert_eq!(args[i + 1], "abc-123");
+    }
+
+    #[test]
+    fn model_and_effort_are_passed_only_when_chosen() {
+        let rt = ClaudeCodeRuntime::new();
+
+        // Nothing chosen: neither flag appears, so the CLI's own configuration and
+        // the user's defaults decide. Passing an empty value would override them.
+        let bare = rt.build_args(&config(), None, None);
+        assert!(!bare.iter().any(|a| a == "--model"));
+        assert!(!bare.iter().any(|a| a == "--effort"));
+
+        let mut cfg = config();
+        cfg.model = Some("opus".into());
+        cfg.effort = Some("high".into());
+        let args = rt.build_args(&cfg, None, None);
+        let m = args
+            .iter()
+            .position(|a| a == "--model")
+            .expect("no --model");
+        assert_eq!(args[m + 1], "opus");
+        let e = args
+            .iter()
+            .position(|a| a == "--effort")
+            .expect("no --effort");
+        assert_eq!(args[e + 1], "high");
+    }
+
+    #[test]
+    fn the_offered_efforts_are_exactly_the_ones_the_cli_accepts() {
+        // This list has to be exact in a way the model list does not. An
+        // unrecognised `--effort` value is a warning, not an error: the CLI falls
+        // back to the default and runs anyway, so a wrong entry here produces a
+        // session that reports one effort and spends another. These five are what
+        // the binary names when it rejects a value.
+        let offered: Vec<String> = effort_choices()
+            .into_iter()
+            .map(|c| c.value)
+            .filter(|v| !v.is_empty())
+            .collect();
+        assert_eq!(offered, ["low", "medium", "high", "xhigh", "max"]);
+    }
+
+    #[test]
+    fn the_offered_models_are_aliases_rather_than_pinned_identifiers() {
+        // A pinned id fails by quietly running last year's model, since the old name
+        // still resolves. An alias is documented to track whatever is current, so
+        // the list cannot rot into silently wrong.
+        for choice in model_choices() {
+            assert!(
+                !choice.value.starts_with("claude-"),
+                "{} is a pinned identifier, not an alias",
+                choice.value
+            );
+        }
+        let values: Vec<String> = model_choices().into_iter().map(|c| c.value).collect();
+        assert!(values.contains(&String::new()), "no way to express 'unset'");
     }
 
     #[test]

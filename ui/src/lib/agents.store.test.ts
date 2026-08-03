@@ -33,6 +33,18 @@ function profile(id: string): api.AgentProfile {
 const OVERVIEW: api.AgentsOverview = {
   profiles: [profile("work"), profile("personal")],
   default_profile: "work",
+  launch_options: {
+    "claude-code": {
+      models: [
+        { value: "", label: "Profile default" },
+        { value: "opus", label: "Opus" },
+      ],
+      efforts: [
+        { value: "", label: "Default effort" },
+        { value: "high", label: "High" },
+      ],
+    },
+  },
   profiles_path: "~/.config/tervin/agents.toml",
   mcp_path: "~/.config/tervin/mcp.json",
 };
@@ -73,6 +85,20 @@ describe("refreshAgents", () => {
 
     expect(useWorkspace.getState().agentsDiscovery).toEqual(discovery);
     expect(useWorkspace.getState().agents?.profiles).toHaveLength(2);
+  });
+
+  it("drops the model and effort when the profile changes", async () => {
+    // A profile can change the runtime, and an alias one runtime resolves is one
+    // another may reject or, worse, read as something else. Carrying the old
+    // selection across would send it anyway.
+    useWorkspace.setState({ activeModel: "opus", activeEffort: "max" });
+
+    useWorkspace.getState().setActiveProfile("personal");
+
+    const s = useWorkspace.getState();
+    expect(s.activeProfileId).toBe("personal");
+    expect(s.activeModel).toBe("");
+    expect(s.activeEffort).toBe("");
   });
 
   it("does not probe the machine when the profiles themselves could not be read", async () => {
