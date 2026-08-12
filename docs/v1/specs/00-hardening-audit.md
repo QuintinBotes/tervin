@@ -63,30 +63,53 @@ clippy lint or a test that fails on a new unjustified one.
 
 ### 00.4 — Secret handling review, and the one secret already stored in plaintext
 
-**A concrete finding, not a review item.** `ui/src/components/SettingsPanel.tsx:707`
-collects a model-endpoint API key with `type="password"` — the interface is explicitly
-declaring it a secret — and `crates/agent-runtime/src/profile.rs:204-219` writes profiles
-to `~/Library/Application Support/tervin/agents.toml` with `toml::to_string_pretty`, in
-the clear, at whatever the umask gives.
+**Corrected after the survey ran against the code. Both halves of the original slice were
+wrong — the mechanism and the fix — and the conclusion survived both.**
 
-So the current position is not "Tervin refuses to hold credentials". It holds one, in
-plaintext, in a file created without an explicit mode.
+**The mechanism.** This slice originally named `SettingsPanel.tsx:707` and
+`profile.rs:204-219`: an API key typed into the endpoint form, serialised into
+`agents.toml`. That is not what happens. `agents_add_local_model`
+(`crates/tervin-app/src/commands.rs:1013-1045`) carries the comment *"Deliberately does
+not create an agent profile"*, and it does not — the key reaches
+`LocalModelRuntime::with_api_key` (`local/mod.rs:129`) and is held in memory. Nothing
+persists it. The endpoint is not persisted either, so it vanishes on restart while the
+form implies otherwise, which is an honesty defect and a different one.
 
-The fix, which strengthens `SECURITY.md` §5 rather than rewriting it:
+The genuine plaintext path is `parse_alias_line`
+(`crates/agent-runtime/src/profile.rs:437-450`), which copies every leading `VAR=value`
+out of a shell alias into `AgentProfile.env`. `AgentProfile::describe` (:139) has an
+explicit `ANTHROPIC_API_KEY` branch, `ProfileConfig::save` (:204-221) serialises the whole
+map with no mode set, and `SettingsPanel.tsx:555-557` renders every pair verbatim on
+screen.
 
-- **Any secret the user hands Tervin goes to the macOS Keychain**, with only a reference
-  in `agents.toml`. That is "reference the keychain, do not become one" applied
-  correctly.
+**The fix.** The original instruction here was to move secrets into the macOS Keychain,
+described as best practice. **It is the wrong answer for this application**, and the
+reason is easy to miss:
+
+> Keychain item ACLs are bound to the application's code signature. Tervin ships unsigned
+> by decision (`COMPETITIVE-SPEC.md` §5), and an ad-hoc signature changes on every
+> rebuild — so a stored item either re-prompts on every launch or becomes unreadable.
+
+That trades a plaintext file for an intermittent, inexplicable failure, which is a worse
+outcome than the one it set out to fix. Do not reintroduce it. If a Keychain is wanted
+later it is its own decision, with the signing question settled first.
+
+What to do instead:
+
+- **Store the variable's name, not its value.** Read the value from the environment at
+  launch. No new dependency, no keychain prompt, and no claim Tervin cannot keep.
+- **Do not copy a `VAR=value` out of an alias into a persisted profile.** An alias is
+  discovered, not authored, so a secret can arrive there without anyone deciding to store
+  it.
 - **SSH passphrases stay refused.** `ssh-agent` with `--apple-use-keychain` already owns
-  that, natively and better. Reporting whether a key is loaded is the right behaviour and
-  stays.
-- **No vault surface.** Tervin does not become a credential manager. §5 holds.
-- Set `0600` explicitly on `agents.toml` and any other config carrying user input,
-  rather than inheriting the umask — the same reasoning `paths.rs:61` already applies to
+  that, natively and better.
+- **No vault surface.** `SECURITY.md` §5 holds unchanged.
+- Set `0600` explicitly on `agents.toml` and any other config carrying user input rather
+  than inheriting the umask — the reasoning `paths.rs:63` already applies to
   `runtime_dir()`.
 
-*Exit:* a test asserts no API key appears in `agents.toml` after one is entered. A test
-asserts the config file's mode bits. `SECURITY.md` describes the Keychain use.
+*Exit:* a test asserts a secret-shaped value from a shell alias never reaches
+`agents.toml`. A test asserts both config files' mode bits.
 
 Three further places handle material that should never be persisted or exported:
 

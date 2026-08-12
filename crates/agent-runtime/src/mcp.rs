@@ -132,6 +132,16 @@ impl McpConfig {
 }
 "#
     }
+
+    /// Write the starter file, readable only by its owner.
+    ///
+    /// Owner-only because of what the user is invited to put in it: every server
+    /// entry takes an `env` block, and that is where a server's API token goes. The
+    /// file is created empty, but the permissions have to be right before the user
+    /// edits it rather than after.
+    pub fn write_example(path: &std::path::Path) -> std::io::Result<()> {
+        tervin_core::paths::write_private(path, Self::example())
+    }
 }
 
 #[cfg(test)]
@@ -202,6 +212,46 @@ mod tests {
     fn an_empty_configuration_produces_an_empty_array_not_null() {
         // The schema requires the parameter; `null` would be a protocol error.
         assert_eq!(McpConfig::default().to_acp(), json!([]));
+    }
+
+    #[test]
+    fn a_declared_server_reports_only_its_name() {
+        // `declared_states` is what the Bridge panel renders, and an MCP entry
+        // routinely holds an API token in `env` — that block exists for exactly that.
+        // A panel row built from anything but the name would put a live credential on
+        // screen and carry it into whatever that panel's state is serialised into.
+        //
+        // `to_acp` deliberately *does* carry `env` values, and that is not an
+        // inconsistency: passing the server to the agent is the entire point of
+        // configuring one, and it goes to the process the user asked for rather than
+        // into a file, a panel, or an export. That half is asserted by
+        // `the_acp_shape_moves_the_name_inline_and_lists_the_environment`.
+        let parsed = config(
+            r#"{"mcpServers":{"paid":{
+                 "command":"secret-server-binary",
+                 "args":["--token","sk-arg-never-rendered"],
+                 "env":{"API_KEY":"sk-env-never-rendered"}
+               }}}"#,
+        );
+
+        let states = parsed.declared_states();
+        assert_eq!(states.len(), 1);
+        let json = serde_json::to_string(&states).expect("a panel state must serialise");
+        assert!(
+            json.contains("paid"),
+            "the name is the whole point of the row: {json}"
+        );
+        for leaked in [
+            "secret-server-binary",
+            "sk-arg-never-rendered",
+            "API_KEY",
+            "sk-env-never-rendered",
+        ] {
+            assert!(
+                !json.contains(leaked),
+                "`{leaked}` reached the Bridge panel: {json}"
+            );
+        }
     }
 
     #[test]

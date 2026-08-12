@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What the Tervin workspace window is allowed to call. Tauri 2 denies every command that is not listed here, so this file is the app's actual capability surface — not documentation of it.",
+  "description": "What the Tervin workspace window is allowed to call. Tauri 2 denies every command that is not listed here, so this file is the app's actual capability surface — not documentation of it. JSON takes no comments, so the reasoning lives in this field. Every entry has a caller: core:default is the frontend baseline that invoke and the IPC channel need; core:event listen and unlisten are api.on() in ui/src/lib/api.ts; core:window:allow-start-dragging is the data-tauri-drag-region title bar in ui/src/App.tsx; dialog:allow-open is the project picker; opener:allow-open-url is activateLink in ui/src/components/TerminalPane.tsx, scoped to the three schemes it can produce — http and https from the url pattern in ui/src/lib/links.ts, and mailto for an email match. opener:allow-open-path is deliberately absent. A capability scope is static JSON compiled into the binary and the project root is chosen at runtime, so \"inside the project\" is not a scope that can be written here; it was granted as \"**\", every path on disk. Opening a path now goes through the open_path command in crates/tervin-app/src/commands.rs, which resolves symlinks, compares against the live project root, and asks before leaving it. opener:default and dialog:default are not used because they would add back tel: urls, reveal-in-file-manager, and the message and save dialogs, none of which anything calls. Removed for the same reason: core:window set-title, is-maximized, toggle-maximize, minimize and close, which nothing calls because titleBarStyle Overlay leaves that work to the native traffic lights, and core:webview:allow-internal-toggle-devtools, which a release build does not compile in.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -10,23 +10,12 @@
     "core:event:allow-unlisten",
 
     "core:window:allow-start-dragging",
-    "core:window:allow-set-title",
-    "core:window:allow-is-maximized",
-    "core:window:allow-toggle-maximize",
-    "core:window:allow-minimize",
-    "core:window:allow-close",
 
-    "core:webview:allow-internal-toggle-devtools",
-
-    "opener:default",
-    "opener:allow-open-url",
     {
-      "identifier": "opener:allow-open-path",
-      "allow": [{ "path": "**" }]
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "http://*" }, { "url": "https://*" }, { "url": "mailto:*" }]
     },
 
-    "dialog:default",
-    "dialog:allow-open",
-    "dialog:allow-message"
+    "dialog:allow-open"
   ]
 }

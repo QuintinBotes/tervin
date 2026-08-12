@@ -760,6 +760,107 @@ mod tests {
     }
 
     #[test]
+    fn a_bundle_carries_no_environment_value() {
+        // A bundle is written to disk and then handed to a second agent, so it is both
+        // a persisted artefact and an export. Nothing in it may be something the user
+        // did not attach.
+        //
+        // The protection is structural rather than a filter: `from_events` reads a
+        // fixed set of payloads and the `_ => {}` arm drops the rest, so an event
+        // carrying a provider's raw arguments or a model's private aside never reaches
+        // the bundle at all. That is invisible from the outside, which is what makes it
+        // easy to undo — "the receiving agent would understand the tool calls better"
+        // is a reasonable-sounding change that turns every one of these into a leak.
+        //
+        // Each payload below puts the same secret-shaped string somewhere a careless
+        // widening would pick it up. None of them is a place the user could see the
+        // value in the timeline and choose to hand it over.
+        const SECRET: &str = "sk-ant-never-in-a-handoff";
+
+        let events = vec![
+            event(EventPayload::ThreadStarted {
+                tier: Tier::Structured,
+                task_title: Some("rotate the deploy key".into()),
+                resume_id: None,
+            }),
+            // A model talking to itself about what it read.
+            event(EventPayload::AgentMessage {
+                text: format!("The key in the environment is {SECRET}, so I could reuse it"),
+                is_reasoning: true,
+                parent_tool_use_id: None,
+            }),
+            // The runtime's own rendering of a tool's arguments.
+            event(EventPayload::ToolRequested {
+                tool_use_id: "t1".into(),
+                tool_name: "Bash".into(),
+                input_summary: format!("ANTHROPIC_API_KEY={SECRET} claude --print hi"),
+                parent_tool_use_id: None,
+            }),
+            // And of its result: `env`, `printenv`, a failed request echoing a header.
+            event(EventPayload::ToolCompleted {
+                tool_use_id: "t1".into(),
+                tool_name: "Bash".into(),
+                is_error: false,
+                output_summary: format!("ANTHROPIC_API_KEY={SECRET}"),
+                duration_ms: Some(4),
+            }),
+            // Proposed, not run: the user never saw this execute.
+            event(EventPayload::CommandProposed {
+                command: format!("curl -H 'authorization: Bearer {SECRET}' https://example.test"),
+                cwd: None,
+                risk: tervin_core::RiskAssessment::benign(),
+            }),
+            event(EventPayload::ContextAttached {
+                description: format!("shell environment including {SECRET}"),
+                kinds: vec!["environment".into()],
+            }),
+            // Something the adapter could not classify. Kept in the timeline with its
+            // type named, but a bundle is not the place to replay an unknown shape.
+            event(EventPayload::RuntimeUnclassified {
+                source_type: format!("vendor.blob({SECRET})"),
+            }),
+            // A real command, so the assertions below are about what is filtered rather
+            // than about a bundle that processed nothing.
+            event(EventPayload::CommandCompleted {
+                command: "cargo test -p rules-engine".into(),
+                exit_code: 0,
+                duration_ms: 12,
+                exit_code_reported: true,
+                block_id: None,
+            }),
+        ];
+
+        let bundle = ContextBundle::from_events(&events);
+
+        // The stream was genuinely read: without this the test would pass just as
+        // happily against a bundle builder that returned `Default::default()`.
+        assert_eq!(bundle.task.as_deref(), Some("rotate the deploy key"));
+        assert_eq!(bundle.commands.len(), 1);
+        assert_eq!(bundle.commands[0].command, "cargo test -p rules-engine");
+
+        // Both forms, because they leave by different doors: the JSON is what is
+        // stored, the prompt is what is sent to another agent.
+        let stored = serde_json::to_string(&bundle).expect("serialise");
+        let prompt = bundle.to_prompt();
+        assert!(
+            !stored.contains(SECRET),
+            "a credential reached the stored bundle: {stored}"
+        );
+        assert!(
+            !prompt.contains(SECRET),
+            "a credential reached the handoff prompt: {prompt}"
+        );
+
+        // And the receiving agent is told the omission is deliberate, so it asks
+        // rather than assuming the environment simply had nothing in it.
+        assert!(
+            bundle.omissions.iter().any(|o| o.contains("environment")),
+            "the omission must be stated: {:?}",
+            bundle.omissions
+        );
+    }
+
+    #[test]
     fn a_bundle_round_trips_through_json() {
         // It is a saved artefact as well as a prompt, so it has to survive storage.
         let bundle = ContextBundle::from_events(&[event(EventPayload::UserPrompted {

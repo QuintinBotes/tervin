@@ -1,6 +1,6 @@
 //! The IPC surface between the Rust core and the workspace UI.
 //!
-//! Two rules shape this module.
+//! Three rules shape this module.
 //!
 //! **Nothing blocking runs on the async runtime.** Git and database calls are
 //! blocking, and a `git status` on a cold repository is slow enough to drop
@@ -11,6 +11,78 @@
 //! **Terminal bytes never become JSON.** Output is delivered over an IPC channel
 //! as raw binary, arriving in the UI as an `ArrayBuffer`. Encoding a build log as
 //! a JSON string array would cost several times the bytes and a parse per frame.
+//!
+//! **Every path the webview hands Rust is either confined or deliberately not, and
+//! the list below says which.** Every command that takes a path, a directory, or an
+//! executable name from the UI is named here. Which of them check anything is not a
+//! question a reader should have to answer by reading every function body, and it is
+//! not a question a separate document can keep answering correctly once the code
+//! moves — so the audit lives beside the commands, and
+//! `the_path_audit_names_every_command_that_takes_one` fails when one is added
+//! without a line in it.
+//!
+//! *Confined to the open project* by [`confined_to_project`], which canonicalises
+//! before it compares, so `..` and a symlink pointing out of the tree are the same
+//! case rather than one caught and one missed:
+//!
+//! - [`fs_list_dir`] — the file explorer. It expands one directory at a time from
+//!   paths a previous listing gave it, so nothing it legitimately asks for is
+//!   outside the project. A symlinked directory that leaves the project is refused
+//!   with the destination named, which is a real behaviour change: the tree used to
+//!   follow it.
+//! - [`git_status`] — its optional `path` chooses which directory git is asked
+//!   about, and git does not bound that the way it bounds a pathspec: pointed at
+//!   another repository it reports that repository in full. Only the requested
+//!   directory is confined. The repository git then finds by walking up from it may
+//!   still enclose the project, because that is also true of the default, and a
+//!   project opened at `repo/crates` has to keep reporting `repo`'s status.
+//!
+//! *Bounded by something other than a check here*, which is why adding one would be
+//! duplication that later reads as the only protection:
+//!
+//! - [`git_diff`], [`git_stage`], [`git_unstage`], [`git_apply_hunks`] — every path
+//!   is a git pathspec run with the repository root as the working directory, and
+//!   git exits 128 with "is outside repository" for `../x` and for `/etc/x` alike.
+//!   `git_apply_hunks` never applies a caller-supplied patch either: the patch is
+//!   rebuilt from git's own diff output for the hunks that were selected.
+//! - [`path_complete`] — `relative_to` is a string prefix filter over an in-memory
+//!   snapshot whose entries are paths *relative to* the project root, produced by the
+//!   index walk. The command touches the filesystem not at all, so the index root is
+//!   the bound and a `..` matches nothing rather than escaping.
+//! - [`thread_start`] and [`thread_send`] attachments — an `Attachment::File` becomes
+//!   the line "Relevant file: <path>" in the prompt. Tervin does not open it. Naming
+//!   a path to an agent that can already read the filesystem is not Tervin reading
+//!   it, and this is the boundary that keeps "never send anything the user did not
+//!   attach" true.
+//!
+//! *Reaches no filesystem*, so there is nothing to confine and a check would be
+//! theatre:
+//!
+//! - [`rules_evaluate`] — `cwd` is classified as a string and recorded in the audit.
+//! - [`connection_launch_spec`] — `cwd` is copied into the returned spec, which is
+//!   shown to the user and becomes real only if it comes back through `pty_spawn`.
+//! - [`scrollback_save`] — `cwd` is stored as a column.
+//! - [`forget_directory`] — deletes the row with that key.
+//! - [`recent_directories`] — takes a query, not a path. It does stat the paths it
+//!   returns, to mark the ones that are gone, but those came from the shell hook
+//!   recording directories the user was actually in.
+//!
+//! *Deliberately unconfined*, because a check would remove the feature rather than
+//! protect it:
+//!
+//! - [`pty_spawn`] — a terminal that can only open a shell inside one directory is
+//!   not a terminal.
+//! - [`thread_start`] — `cwd` is where the agent works, and the user chooses it. What
+//!   the agent does once it is there is gated by Tervin Rules, which is the control
+//!   that exists for this; a confined `cwd` would suggest a second one that does not.
+//! - [`set_project_root`] — this *is* the user naming a project. It rejects a path
+//!   that is not a directory and accepts any directory on the machine, which is
+//!   correct: every other bound on this list is measured from its result.
+//! - [`agents_add_acp`] and [`agents_save_profiles`] — `binary` is an executable to
+//!   run, typed into Settings. Same decision as `pty_spawn`'s `program`.
+//! - [`open_path`] — outside the project *and* the home directory is a question for
+//!   the user rather than a refusal, because the path was printed by a command they
+//!   ran. See [`decide_and_open`].
 
 use crate::state::{AppState, PaneState, ThreadRuntime};
 use agent_runtime::runtime::{Attachment, LaunchConfig};
@@ -20,7 +92,7 @@ use git_service::{DiffMode, FileDiff, RepoStatus};
 use rules_engine::{ActionContext, ActionKind, ApprovalOutcome, ApprovalRequest, Decision};
 use serde::{Deserialize, Serialize};
 use shell_integration::{IntegrationStatus, Shell, ShellAliases};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, State};
@@ -553,16 +625,25 @@ pub async fn git_status(
     path: Option<String>,
 ) -> Result<Option<RepoStatus>> {
     let git = state.git.clone();
-    let root = path
-        .map(PathBuf::from)
-        .unwrap_or_else(|| state.project_root());
-    blocking(move || {
-        let Some(repo) = git.repo_root(&root) else {
-            return Ok(None);
-        };
-        git.status(&repo).map(Some).map_err(CommandError::from)
-    })
-    .await
+    let root = state.project_root();
+    blocking(move || status_of(&git, path, &root)).await
+}
+
+/// All of [`git_status`] but the state lookup, so a test drives what the command runs
+/// rather than a second copy of it.
+fn status_of(
+    git: &git_service::GitService,
+    requested: Option<String>,
+    project_root: &Path,
+) -> Result<Option<RepoStatus>> {
+    // `path` selects the directory git is asked about, and git will report whichever
+    // repository encloses it — including one that has nothing to do with the open
+    // project. This is the only `git_*` argument git itself does not bound.
+    let dir = confined_to_project(requested, project_root)?;
+    let Some(repo) = git.repo_root(&dir) else {
+        return Ok(None);
+    };
+    git.status(&repo).map(Some).map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -991,6 +1072,7 @@ pub async fn agents_add_acp(
         // for this agent — the user's command line is the whole definition.
         args,
         env: Default::default(),
+        secrets_from_env: Vec::new(),
         model: None,
         permission_mode: None,
         badge: None,
@@ -1121,6 +1203,31 @@ pub async fn thread_start(
     let profile = state
         .profile(request.profile_id.as_deref())
         .ok_or_else(|| CommandError::new("no_profile", "No agent profile is configured."))?;
+
+    // A profile names the secrets it needs and never holds their values. Absent
+    // means the agent would start and fail its own authentication, with an error
+    // that says nothing about which profile or which variable — so the refusal
+    // happens here, where both are still known.
+    let missing = profile.missing_secrets();
+    if !missing.is_empty() {
+        let (subject, object) = if missing.len() == 1 {
+            ("it is", "it")
+        } else {
+            ("they are", "them")
+        };
+        return Err(CommandError::new(
+            "missing_secret",
+            format!(
+                "Profile `{}` reads {} from the environment, and {subject} not set where \
+                 Tervin is running. Tervin does not store secret values. Export {object} in \
+                 the shell Tervin is launched from, or put a value in the profile's `env` in \
+                 {}, which does store it in that file.",
+                profile.name,
+                missing.join(", "),
+                tervin_core::paths::abbreviate(&ProfileConfig::path()),
+            ),
+        ));
+    }
 
     let runtime = state
         .agents
@@ -1888,55 +1995,63 @@ pub struct DirEntry {
 ///
 /// The listing is bounded: a directory with a hundred thousand entries in it would
 /// otherwise stall the UI thread rendering rows nobody will scroll to.
+///
+/// It is also confined to the open project. The explorer only ever asks for a path a
+/// previous listing handed it, so the confinement costs it nothing — except for a
+/// symlinked directory that leaves the project, which the tree used to follow and now
+/// refuses with the destination named.
 #[tauri::command]
 pub async fn fs_list_dir(
     state: State<'_, Arc<AppState>>,
     path: Option<String>,
 ) -> Result<Vec<DirEntry>> {
+    let root = state.project_root();
+    blocking(move || list_project_directory(path, &root)).await
+}
+
+/// All of [`fs_list_dir`] but the state lookup, so a test drives what the command runs
+/// rather than a second copy of it.
+fn list_project_directory(requested: Option<String>, project_root: &Path) -> Result<Vec<DirEntry>> {
     const MAX_ENTRIES: usize = 2_000;
 
-    let root = state.project_root();
-    let target = path.map(PathBuf::from).unwrap_or(root);
+    let target = confined_to_project(requested, project_root)?;
 
-    blocking(move || {
-        let read = std::fs::read_dir(&target)
-            .map_err(|e| CommandError::new("read_dir", format!("{}: {e}", target.display())))?;
+    let read = std::fs::read_dir(&target)
+        .map_err(|e| CommandError::new("read_dir", format!("{}: {e}", target.display())))?;
 
-        let mut entries: Vec<DirEntry> = Vec::new();
-        for item in read.flatten() {
-            if entries.len() >= MAX_ENTRIES {
-                break;
-            }
-            let name = item.file_name().to_string_lossy().to_string();
-            // `file_type` does not follow symlinks, which is what is wanted: a link to
-            // a directory should be marked, not silently descended into.
-            let file_type = item.file_type().ok();
-            let symlink = file_type.is_some_and(|t| t.is_symlink());
-            let is_dir = if symlink {
-                // Resolve only to decide whether it is expandable.
-                item.path().is_dir()
-            } else {
-                file_type.is_some_and(|t| t.is_dir())
-            };
-            entries.push(DirEntry {
-                hidden: name.starts_with('.'),
-                path: item.path().display().to_string(),
-                name,
-                is_dir,
-                symlink,
-            });
+    let mut entries: Vec<DirEntry> = Vec::new();
+    for item in read.flatten() {
+        if entries.len() >= MAX_ENTRIES {
+            break;
         }
-
-        // Directories first, then case-insensitive by name — the order every file tree
-        // uses, and the one people can scan without reading.
-        entries.sort_by(|a, b| {
-            b.is_dir
-                .cmp(&a.is_dir)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        let name = item.file_name().to_string_lossy().to_string();
+        // `file_type` does not follow symlinks, which is what is wanted: a link to
+        // a directory should be marked, not silently descended into.
+        let file_type = item.file_type().ok();
+        let symlink = file_type.is_some_and(|t| t.is_symlink());
+        let is_dir = if symlink {
+            // Resolve only to decide whether it is expandable.
+            item.path().is_dir()
+        } else {
+            file_type.is_some_and(|t| t.is_dir())
+        };
+        entries.push(DirEntry {
+            hidden: name.starts_with('.'),
+            path: item.path().display().to_string(),
+            name,
+            is_dir,
+            symlink,
         });
-        Ok(entries)
-    })
-    .await
+    }
+
+    // Directories first, then case-insensitive by name — the order every file tree
+    // uses, and the one people can scan without reading.
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    Ok(entries)
 }
 
 /// What the index currently holds, for the settings pane.
@@ -2128,6 +2243,171 @@ pub fn set_project_root(state: State<'_, Arc<AppState>>, path: String) -> Result
     Ok(path.display().to_string())
 }
 
+// ============================================================ opening paths
+
+/// What happened when the UI asked for a path to be opened.
+///
+/// A refusal is a value rather than an error. "This is outside your project" is a
+/// question for the user; "that file is gone" is a failure. Returning both as `Err`
+/// would put them in the same channel and lose the difference.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OpenOutcome {
+    /// Handed to the user's own default application for that file type.
+    Opened { path: String },
+    /// Nothing was opened: the destination is outside both the project root and the
+    /// home directory, so the user is asked first.
+    ///
+    /// `path` is where it *resolves* to, which is what the prompt has to show — the
+    /// text that was clicked can be a symlink naming somewhere else entirely.
+    NeedsConfirmation { path: String, reason: String },
+}
+
+/// Open a path the user clicked in terminal output.
+///
+/// The webview cannot do this itself. `opener:allow-open-path` is not granted,
+/// because a Tauri capability scope is static JSON compiled into the binary while
+/// the project root is chosen at runtime by [`set_project_root`] — so "inside the
+/// project" is not a scope that can be written there, and what was written instead
+/// was `**`. The decision lives here, where the root is known.
+///
+/// Symlinks are resolved before the comparison, so a link inside the project cannot
+/// be used to reach outside it. That is the rule ACP filesystem access already
+/// applies (SECURITY.md), and two rules for the same question should not disagree.
+///
+/// What this is not: containment of a hostile webview. Anything that can call this
+/// command can also pass `confirmed`. What it removes is the standing grant that let
+/// any path on disk be opened with none of Tervin's code involved.
+#[tauri::command]
+pub fn open_path(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    confirmed: bool,
+) -> Result<OpenOutcome> {
+    decide_and_open(
+        &path,
+        &state.project_root(),
+        dirs::home_dir().as_deref(),
+        confirmed,
+        open_with_default_application,
+    )
+}
+
+/// Hand a path to the user's own default application for that file type.
+///
+/// The only side effect on this path, and the reason [`decide_and_open`] takes it as
+/// a parameter: called for real from a test, it would launch an editor on the
+/// machine running `cargo test`. The decision is the thing under test; this is the
+/// thing it decides about.
+fn open_with_default_application(path: &Path) -> Result<()> {
+    tauri_plugin_opener::open_path(path, None::<&str>)
+        .map_err(|e| CommandError::new("open_failed", e))
+}
+
+/// Resolve `requested`, decide whether it may be opened without asking, and open it.
+fn decide_and_open(
+    requested: &str,
+    project_root: &Path,
+    home: Option<&Path>,
+    confirmed: bool,
+    open: impl FnOnce(&Path) -> Result<()>,
+) -> Result<OpenOutcome> {
+    let requested = PathBuf::from(shellexpand_tilde(requested));
+    let resolved = requested.canonicalize().map_err(|e| {
+        CommandError::new(
+            "no_such_path",
+            format!("{} cannot be opened: {e}", requested.display()),
+        )
+    })?;
+
+    if !confirmed && !contained_by(&resolved, project_root, home) {
+        let reason = if resolved == requested {
+            "This path is outside the project and your home directory.".to_string()
+        } else {
+            format!(
+                "{} resolves to a path outside the project and your home directory.",
+                requested.display()
+            )
+        };
+        return Ok(OpenOutcome::NeedsConfirmation {
+            path: resolved.display().to_string(),
+            reason,
+        });
+    }
+
+    open(&resolved)?;
+    Ok(OpenOutcome::Opened {
+        path: resolved.display().to_string(),
+    })
+}
+
+/// Whether `path` lies inside the project root or the home directory.
+///
+/// Home is included because a path printed by a command the user ran in their own
+/// terminal is usually theirs; what the boundary excludes is system locations, other
+/// users, and mounted volumes — the destinations where "I clicked a file name" and
+/// "something opened" should not be the same event.
+///
+/// Both roots are canonicalised first. On macOS a temporary directory is reached
+/// through `/var`, which is a symlink to `/private/var`, so a prefix test against the
+/// unresolved form reports "outside" for a path that is plainly inside.
+fn contained_by(path: &Path, project_root: &Path, home: Option<&Path>) -> bool {
+    [Some(project_root), home]
+        .into_iter()
+        .flatten()
+        .filter_map(|root| root.canonicalize().ok())
+        // Component-wise, not textual: `/w/project-two` is not inside `/w/project`.
+        .any(|root| path.starts_with(root))
+}
+
+/// Resolve a directory the webview asked about, refusing anything outside the project.
+///
+/// `None` means the project root itself, and it is returned unresolved. That value is
+/// Tervin's own rather than the webview's, and canonicalising it here would change
+/// every path the explorer displays from the one the user opened into its symlink
+/// destination — a cosmetic change to the answer, from a function whose job is to
+/// decide whether to answer at all.
+///
+/// Anything else is canonicalised before the comparison, which is the whole point:
+/// `..` and a symlink out of the tree become one case instead of one caught and one
+/// waved through. It is the rule [`decide_and_open`] applies and the rule SECURITY.md
+/// states for ACP filesystem access; three answers to the same question would
+/// eventually be three different answers.
+///
+/// Home is deliberately not a second root here, unlike [`open_path`]. Clicking a path
+/// printed in your own terminal is a request about one named file; these commands
+/// enumerate, and "list anything under my home directory" is a wider grant than
+/// either caller has a use for.
+fn confined_to_project(requested: Option<String>, project_root: &Path) -> Result<PathBuf> {
+    let Some(requested) = requested else {
+        return Ok(project_root.to_path_buf());
+    };
+    let requested = PathBuf::from(shellexpand_tilde(&requested));
+    let resolved = requested.canonicalize().map_err(|e| {
+        CommandError::new(
+            "no_such_path",
+            format!("{} cannot be read: {e}", requested.display()),
+        )
+    })?;
+
+    if !contained_by(&resolved, project_root, None) {
+        // The resolved path is named whenever it differs, for the reason the open
+        // prompt names it: when a link is involved, it is the only string in the
+        // exchange that says where the request actually went.
+        let message = if resolved == requested {
+            format!("{} is outside the open project.", requested.display())
+        } else {
+            format!(
+                "{} resolves to {}, which is outside the open project.",
+                requested.display(),
+                resolved.display()
+            )
+        };
+        return Err(CommandError::new("outside_project", message));
+    }
+    Ok(resolved)
+}
+
 fn shellexpand_tilde(path: &str) -> String {
     match path.strip_prefix("~/") {
         Some(rest) => dirs::home_dir()
@@ -2149,6 +2429,231 @@ fn first_line(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    // The tests below pass `decide_and_open` a closure that records the path instead
+    // of [`open_with_default_application`], which launches the user's editor — not
+    // something `cargo test` may do to the machine it runs on. Everything before that
+    // one call is real: tilde expansion, symlink resolution on a real filesystem, and
+    // the containment decision, which is the thing under test.
+
+    /// A real directory on disk, addressed by its canonical path.
+    ///
+    /// The canonicalisation is not tidiness. On macOS a temporary directory is handed
+    /// out as `/var/folders/…`, and `/var` is a symlink to `/private/var` — so every
+    /// path built from `TempDir::path` resolves to something else, and a test that
+    /// skipped this would be asserting the symlink case in all six of these tests
+    /// while appearing to cover both.
+    fn scratch(dir: &tempfile::TempDir) -> PathBuf {
+        dir.path().canonicalize().unwrap()
+    }
+
+    /// A file, with its parent directories.
+    fn touch(path: &Path) -> PathBuf {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
+        path.to_path_buf()
+    }
+
+    #[test]
+    fn a_path_outside_the_project_is_not_opened_without_confirmation() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let sibling_dir = tempfile::tempdir().unwrap();
+        let project = scratch(&project_dir);
+        let outside = touch(&scratch(&sibling_dir).join("notes.txt"));
+
+        let opened: RefCell<Vec<PathBuf>> = RefCell::new(Vec::new());
+        let outcome = decide_and_open(
+            &outside.display().to_string(),
+            &project,
+            // No home root: this asserts the project boundary on its own.
+            None,
+            false,
+            |path: &Path| {
+                opened.borrow_mut().push(path.to_path_buf());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            OpenOutcome::NeedsConfirmation {
+                path: outside.display().to_string(),
+                reason: "This path is outside the project and your home directory.".to_string(),
+            }
+        );
+        // The claim that matters is not that it was classified: it is that nothing
+        // reached the system opener before the user was asked.
+        assert!(
+            opened.borrow().is_empty(),
+            "opened {:?} before asking",
+            opened.borrow()
+        );
+    }
+
+    #[test]
+    fn a_symlink_pointing_out_of_the_project_is_treated_as_outside_it() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let sibling_dir = tempfile::tempdir().unwrap();
+        let project = scratch(&project_dir);
+        let secret = touch(&scratch(&sibling_dir).join("id_rsa"));
+        // A real symlink, because the whole question is what the filesystem does with
+        // it: by every textual test, the path handed in is inside the project.
+        let link = project.join("key");
+        std::os::unix::fs::symlink(&secret, &link).unwrap();
+
+        let opened: RefCell<Vec<PathBuf>> = RefCell::new(Vec::new());
+        let outcome = decide_and_open(
+            &link.display().to_string(),
+            &project,
+            None,
+            false,
+            |path: &Path| {
+                opened.borrow_mut().push(path.to_path_buf());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        match outcome {
+            OpenOutcome::NeedsConfirmation { path, reason } => {
+                // The prompt shows the destination, not the link. Showing the link
+                // would ask the user to approve the one string that does not say
+                // where this goes.
+                assert_eq!(path, secret.display().to_string());
+                assert!(reason.contains("resolves to"), "{reason}");
+            }
+            other => panic!("a symlink out of the project was opened without asking: {other:?}"),
+        }
+        assert!(opened.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_path_inside_the_project_opens_without_asking() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let project = scratch(&project_dir);
+        let file = touch(&project.join("src").join("main.rs"));
+
+        let opened: RefCell<Vec<PathBuf>> = RefCell::new(Vec::new());
+        let outcome = decide_and_open(
+            &file.display().to_string(),
+            &project,
+            None,
+            false,
+            |path: &Path| {
+                opened.borrow_mut().push(path.to_path_buf());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            OpenOutcome::Opened {
+                path: file.display().to_string()
+            }
+        );
+        assert_eq!(*opened.borrow(), vec![file]);
+    }
+
+    #[test]
+    fn a_path_in_the_home_directory_opens_without_asking() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = scratch(&home_dir);
+        let file = touch(&home.join(".zshrc"));
+
+        let opened: RefCell<Vec<PathBuf>> = RefCell::new(Vec::new());
+        let outcome = decide_and_open(
+            &file.display().to_string(),
+            &scratch(&project_dir),
+            Some(&home),
+            false,
+            |path: &Path| {
+                opened.borrow_mut().push(path.to_path_buf());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            OpenOutcome::Opened {
+                path: file.display().to_string()
+            }
+        );
+        assert_eq!(*opened.borrow(), vec![file]);
+    }
+
+    #[test]
+    fn a_confirmed_path_outside_the_project_is_opened() {
+        // Without this the prompt would be a control that does nothing, which is worse
+        // than not offering it at all.
+        let project_dir = tempfile::tempdir().unwrap();
+        let sibling_dir = tempfile::tempdir().unwrap();
+        let outside = touch(&scratch(&sibling_dir).join("crash.log"));
+
+        let opened: RefCell<Vec<PathBuf>> = RefCell::new(Vec::new());
+        let outcome = decide_and_open(
+            &outside.display().to_string(),
+            &scratch(&project_dir),
+            None,
+            true,
+            |path: &Path| {
+                opened.borrow_mut().push(path.to_path_buf());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            OpenOutcome::Opened {
+                path: outside.display().to_string()
+            }
+        );
+        assert_eq!(*opened.borrow(), vec![outside]);
+    }
+
+    #[test]
+    fn a_path_that_no_longer_exists_is_reported_rather_than_ignored() {
+        // A stale path in old scrollback is the common case. The click used to do
+        // nothing at all, which from the outside is a slow open.
+        let project_dir = tempfile::tempdir().unwrap();
+        let project = scratch(&project_dir);
+        let gone = project.join("deleted.txt");
+
+        let opened: RefCell<Vec<PathBuf>> = RefCell::new(Vec::new());
+        let error = decide_and_open(
+            &gone.display().to_string(),
+            &project,
+            None,
+            false,
+            |path: &Path| {
+                opened.borrow_mut().push(path.to_path_buf());
+                Ok(())
+            },
+        )
+        .expect_err("a missing path reported success");
+
+        assert_eq!(error.code, "no_such_path");
+        assert!(error.message.contains("deleted.txt"), "{}", error.message);
+        assert!(opened.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_sibling_directory_sharing_a_prefix_is_not_inside_the_project() {
+        // `starts_with` on a `Path` is component-wise; on a string it is not, and
+        // `/w/project-two` would then be inside `/w/project`.
+        let workspace_dir = tempfile::tempdir().unwrap();
+        let workspace = scratch(&workspace_dir);
+        let project = workspace.join("project");
+        let file = touch(&workspace.join("project-two").join("main.rs"));
+        std::fs::create_dir_all(&project).unwrap();
+
+        assert!(!contained_by(&file, &project, None));
+    }
 
     #[test]
     fn a_slug_is_stable_safe_and_never_empty() {
@@ -2178,6 +2683,350 @@ mod tests {
             assert!(
                 !s.starts_with('-') && !s.ends_with('-'),
                 "{name} produced {s}"
+            );
+        }
+    }
+
+    // ---------------------------------------------------- confined commands
+    //
+    // Real directories, real symlinks, and a real `git` against real repositories.
+    // The question these answer is what the filesystem does with a path, which is not
+    // a question a fixture can be asked.
+
+    /// The entry names a listing returned, in the order it returned them.
+    fn names(entries: &[DirEntry]) -> Vec<&str> {
+        entries.iter().map(|e| e.name.as_str()).collect()
+    }
+
+    #[test]
+    fn listing_a_directory_outside_the_project_is_refused_rather_than_returning_its_contents() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let sibling_dir = tempfile::tempdir().unwrap();
+        let project = scratch(&project_dir);
+        let outside = scratch(&sibling_dir);
+        touch(&outside.join("id_rsa"));
+
+        // Listed first as its own project, so what follows is the boundary refusing
+        // and not a directory that is empty, missing, or unreadable.
+        let its_own = list_project_directory(Some(outside.display().to_string()), &outside)
+            .expect("a directory could not be listed as its own project");
+        assert_eq!(names(&its_own), vec!["id_rsa"]);
+
+        let error = list_project_directory(Some(outside.display().to_string()), &project)
+            .expect_err("a directory outside the project was listed");
+
+        assert_eq!(error.code, "outside_project");
+        assert!(
+            error.message.contains(&outside.display().to_string()),
+            "the refusal does not say which path it refused: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn a_symlinked_directory_leaving_the_project_is_not_listed_through_its_link_path() {
+        let project_dir = tempfile::tempdir().unwrap();
+        let sibling_dir = tempfile::tempdir().unwrap();
+        let project = scratch(&project_dir);
+        let outside = scratch(&sibling_dir);
+        touch(&outside.join("id_rsa"));
+        // A real symlink, because that is the whole question: by every textual test
+        // the path being asked for is inside the project.
+        let link = project.join("keys");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+
+        let error = list_project_directory(Some(link.display().to_string()), &project)
+            .expect_err("a symlink out of the project was followed");
+
+        assert_eq!(error.code, "outside_project");
+        // Named by destination, not by link: the link path is the one string in the
+        // exchange that does not say where the listing would have gone.
+        assert!(
+            error.message.contains(&outside.display().to_string()),
+            "the refusal does not name the destination: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn listing_a_directory_inside_the_project_still_returns_its_entries() {
+        // The other half of the claim. A confinement that refused everything would
+        // pass both tests above and break the file explorer.
+        let project_dir = tempfile::tempdir().unwrap();
+        let project = scratch(&project_dir);
+        touch(&project.join("src").join("main.rs"));
+        touch(&project.join("Cargo.toml"));
+
+        // Directories first, then by name — asserted here because the sort is the
+        // rest of what this function does.
+        let root = list_project_directory(None, &project).unwrap();
+        assert_eq!(names(&root), vec!["src", "Cargo.toml"]);
+
+        let src = project.join("src").display().to_string();
+        let nested = list_project_directory(Some(src), &project).unwrap();
+        assert_eq!(names(&nested), vec!["main.rs"]);
+    }
+
+    /// A real repository with one untracked file in it.
+    fn init_repo(dir: &Path, file: &str) {
+        let ok = std::process::Command::new("git")
+            .arg("init")
+            .arg("--quiet")
+            .current_dir(dir)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "git init failed in {}", dir.display());
+        touch(&dir.join(file));
+    }
+
+    #[test]
+    fn a_repository_outside_the_project_is_not_reported_by_git_status() {
+        let git = git_service::GitService::new();
+        // A contributor without git installed should not see a red suite.
+        if !git.is_available() {
+            return;
+        }
+
+        let project_dir = tempfile::tempdir().unwrap();
+        let other_dir = tempfile::tempdir().unwrap();
+        let project = scratch(&project_dir);
+        let other = scratch(&other_dir);
+        init_repo(&project, "README.md");
+        init_repo(&other, "secret.txt");
+
+        // Reported in full when it is the open project, so the refusal below is the
+        // boundary rather than git declining this repository for its own reasons.
+        let its_own = status_of(&git, None, &other)
+            .unwrap()
+            .expect("a real repository reported no status");
+        assert!(
+            its_own.files.iter().any(|f| f.path == "secret.txt"),
+            "the repository under test reports nothing: {its_own:?}"
+        );
+
+        let error = status_of(&git, Some(other.display().to_string()), &project)
+            .expect_err("another repository's status was reported");
+        assert_eq!(error.code, "outside_project");
+    }
+
+    // ------------------------------------------------------- the audit itself
+
+    /// Parameter names that mean a path, and the type names that carry one inside.
+    ///
+    /// Both halves are needed. `pty_spawn` and `thread_start` take a request struct,
+    /// so a scan that only looked at parameter names would miss the two commands with
+    /// the widest reach while reporting that it had checked everything.
+    const PATH_SHAPED_PARAMS: &[&str] = &["path", "paths", "cwd", "relative_to", "binary", "dir"];
+
+    /// (type, the field that is a path, where it is declared, relative to the
+    /// workspace root).
+    ///
+    /// The declaration is checked so a renamed field fails here rather than quietly
+    /// dropping its command out of the audit — which is the failure this whole test
+    /// exists to prevent, arriving through the back door.
+    const PATH_CARRYING_TYPES: &[(&str, &str, &str)] = &[
+        ("SpawnRequest", "cwd", "crates/tervin-app/src/commands.rs"),
+        (
+            "ThreadStartRequest",
+            "cwd",
+            "crates/tervin-app/src/commands.rs",
+        ),
+        ("Attachment", "path", "crates/agent-runtime/src/runtime.rs"),
+        (
+            "AgentProfile",
+            "binary",
+            "crates/agent-runtime/src/profile.rs",
+        ),
+    ];
+
+    fn workspace_root() -> PathBuf {
+        // CARGO_MANIFEST_DIR is crates/tervin-app, so the workspace is two levels up.
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("the manifest directory has no grandparent")
+            .to_path_buf()
+    }
+
+    fn source_of_this_module() -> (PathBuf, String) {
+        let path = workspace_root().join("crates/tervin-app/src/commands.rs");
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path:?}: {e}"));
+        (path, text)
+    }
+
+    /// The `//!` block at the top of the file.
+    fn module_header(source: &str) -> String {
+        source
+            .lines()
+            .take_while(|line| line.starts_with("//!") || line.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// From `open` to its matching close, brace- or paren-balanced.
+    ///
+    /// A parameter list is not scannable to the next `)`: `Vec<(String, String)>` is a
+    /// real parameter type in this file and would end the signature early.
+    fn balanced(text: &str, from: usize, open: char, close: char) -> Option<&str> {
+        let mut depth = 0usize;
+        for (offset, ch) in text[from..].char_indices() {
+            if ch == open {
+                depth += 1;
+            } else if ch == close {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&text[from..from + offset + close.len_utf8()]);
+                }
+            }
+        }
+        None
+    }
+
+    /// Every `#[tauri::command]` in this file, as (name, parameter list).
+    ///
+    /// The signature is found by its line beginning `pub fn` or `pub async fn` rather
+    /// than by the next `fn `, because `block_output` carries a doc comment *between*
+    /// its attribute and its signature and a comment is free to contain any word.
+    fn commands_with_signatures(source: &str) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for (index, _) in source.match_indices("#[tauri::command]") {
+            let rest = &source[index..];
+            let Some(signature) = rest
+                .match_indices("\npub ")
+                .map(|(at, _)| at + 1)
+                .find(|&at| {
+                    rest[at..].starts_with("pub fn ") || rest[at..].starts_with("pub async fn ")
+                })
+                .map(|at| &rest[at..])
+            else {
+                continue;
+            };
+            let Some(fn_at) = signature.find("fn ") else {
+                continue;
+            };
+            let after = &signature[fn_at + 3..];
+            let Some(paren) = after.find('(') else {
+                continue;
+            };
+            let name = after[..paren].trim().to_string();
+            let Some(params) = balanced(after, paren, '(', ')') else {
+                continue;
+            };
+            out.push((name, params.to_string()));
+        }
+        out
+    }
+
+    /// Identifiers in `text`, so `path` does not match `path_complete` or `pathspec`.
+    fn identifiers(text: &str) -> Vec<&str> {
+        text.split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn the_path_audit_names_every_command_that_takes_one() {
+        let (path, source) = source_of_this_module();
+        let header = module_header(&source);
+        // The header is a third of this file's documentation; if the scan for it
+        // breaks, every assertion below passes for the wrong reason.
+        assert!(
+            header.contains("Every path the webview hands Rust"),
+            "the module header scan is broken: {} lines found in {}",
+            header.lines().count(),
+            path.display()
+        );
+
+        let commands = commands_with_signatures(&source);
+        // Registered commands are counted in `ui/src/lib/ipc.registered.test.ts`; this
+        // only needs to know the scan found the surface rather than a handful of it.
+        assert!(
+            commands.len() > 60,
+            "the command scan is broken: it found {} commands in {}",
+            commands.len(),
+            path.display()
+        );
+
+        let mut takes_a_path: Vec<&str> = Vec::new();
+        for (name, params) in &commands {
+            let tokens = identifiers(params);
+            let by_name = tokens.iter().any(|t| PATH_SHAPED_PARAMS.contains(t));
+            let by_type = PATH_CARRYING_TYPES
+                .iter()
+                .any(|(ty, ..)| tokens.contains(ty));
+            if by_name || by_type {
+                takes_a_path.push(name.as_str());
+            }
+        }
+        assert!(
+            takes_a_path.len() > 10,
+            "the path-parameter scan is broken: it flagged {takes_a_path:?}"
+        );
+
+        let missing: Vec<&&str> = takes_a_path
+            .iter()
+            .filter(|name| !header.contains(&format!("[`{name}`]")))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "these commands take a path from the UI and are not named in the audit at \
+             the top of {}: {missing:?}",
+            path.display()
+        );
+    }
+
+    #[test]
+    fn every_path_carrying_request_type_still_carries_the_field_the_audit_scans_for() {
+        for (ty, field, file) in PATH_CARRYING_TYPES {
+            let path = workspace_root().join(file);
+            let source = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path:?}: {e}"));
+            let declaration = ["pub struct ", "pub enum "]
+                .iter()
+                .find_map(|kw| source.find(&format!("{kw}{ty}")))
+                .unwrap_or_else(|| panic!("{ty} is no longer declared in {}", path.display()));
+            let brace = source[declaration..]
+                .find('{')
+                .map(|at| declaration + at)
+                .unwrap_or_else(|| panic!("{ty} has no body in {}", path.display()));
+            let body = balanced(&source, brace, '{', '}')
+                .unwrap_or_else(|| panic!("{ty}'s body is unterminated in {}", path.display()));
+
+            assert!(
+                body.contains(&format!("{field}:")),
+                "{ty} no longer has a `{field}` field, so the path audit in commands.rs \
+                 is scanning for something that is not there any more ({})",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn every_function_the_audit_links_to_exists() {
+        // A rename leaves the audit describing a command by a name nothing answers to,
+        // which reads as a rule that is still in force.
+        let (path, source) = source_of_this_module();
+        let header = module_header(&source);
+
+        let mut linked: Vec<&str> = Vec::new();
+        let mut rest = header.as_str();
+        while let Some(at) = rest.find("[`") {
+            rest = &rest[at + 2..];
+            let Some(end) = rest.find("`]") else { break };
+            linked.push(&rest[..end]);
+            rest = &rest[end + 2..];
+        }
+        assert!(
+            linked.len() > 15,
+            "the intra-doc link scan is broken: it found {linked:?}"
+        );
+
+        for name in linked {
+            assert!(
+                source.contains(&format!("fn {name}(")),
+                "the audit at the top of {} links to `{name}`, which is not a function \
+                 in this file",
+                path.display()
             );
         }
     }

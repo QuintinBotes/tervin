@@ -10,6 +10,24 @@
 //! Machine-readable formats (`--porcelain=v2 -z`) are used everywhere so paths
 //! containing spaces, quotes, or newlines parse exactly.
 
+// `panic = "abort"` in the release profile means a panic on any thread ends the
+// whole window, so a production panic costs the session rather than one feature.
+// Each one that remains carries an `#[allow]` whose `reason` is the argument for
+// why it cannot fire; a new one has to make that argument or fail the build. What
+// this list covers, and the one route it cannot, is written down in tervin-app's
+// `tests/production_panics.rs`.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::allow_attributes_without_reason
+    )
+)]
+
 pub mod diff;
 pub mod model;
 
@@ -461,11 +479,15 @@ impl GitService {
                 }
             })?;
 
-        child
-            .stdin
-            .as_mut()
-            .expect("stdin was piped")
-            .write_all(patch.as_bytes())?;
+        // `.stdin(Stdio::piped())` is set on the builder above, and `spawn` fills
+        // `child.stdin` in exactly that case. Nothing has taken it since: `child` is
+        // the previous statement's local and has not left this function.
+        #[allow(
+            clippy::expect_used,
+            reason = "`.stdin(Stdio::piped())` is on this builder"
+        )]
+        let stdin = child.stdin.as_mut().expect("stdin was piped");
+        stdin.write_all(patch.as_bytes())?;
 
         let output = child.wait_with_output()?;
         if !output.status.success() {

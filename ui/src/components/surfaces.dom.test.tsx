@@ -26,6 +26,7 @@ import { ConnectionsPanel } from "./ConnectionsPanel";
 import { SavedCommands } from "./SavedCommands";
 import { CommandHistory } from "./CommandHistory";
 import { ProjectInstructions } from "./ProjectInstructions";
+import { SettingsPanel } from "./SettingsPanel";
 
 /** A Block, with every field overridable so a test can make one awkward. */
 function block(over: Partial<api.BlockSummary> = {}): api.BlockSummary {
@@ -1351,5 +1352,85 @@ describe("a timeline with a repeating event", () => {
     useWorkspace.setState({ threads: { [t.id]: t }, activeThreadId: t.id });
     const { findByText } = render(<ThreadPanel />);
     expect(await findByText("cargo test --workspace")).toBeTruthy();
+  });
+});
+
+describe("agent profiles in Settings", () => {
+  /** A profile as the backend sends one for an adopted `ANTHROPIC_API_KEY=… claude` alias. */
+  function keyed(over: Partial<api.AgentProfile> = {}): api.AgentProfile {
+    return {
+      id: "claude-work",
+      name: "Claude · Work",
+      runtime_id: "claude-code",
+      binary: "claude",
+      args: [],
+      env: { CLAUDE_CONFIG_DIR: "~/.claude-work" },
+      secrets_from_env: ["ANTHROPIC_API_KEY"],
+      model: null,
+      permission_mode: null,
+      badge: "work",
+      sensitive: true,
+      ...over,
+    };
+  }
+
+  function overview(profiles: api.AgentProfile[]): api.AgentsOverview {
+    return {
+      profiles,
+      default_profile: profiles[0]?.id ?? null,
+      launch_options: {},
+      profiles_path: "~/.config/tervin/agents.toml",
+      mcp_path: "~/.config/tervin/mcp.json",
+    };
+  }
+
+  /** Open Settings on the Agents section, the way a user reaches it. */
+  function agentsSection(profiles: api.AgentProfile[]) {
+    vi.spyOn(api, "projectInstructions").mockResolvedValue({
+      project_root: "~/Projects/thing",
+      discovered: { files: [], mcp: [], truncated: false },
+      adoptable: [],
+    });
+    useWorkspace.setState({ agents: overview(profiles) });
+    const view = render(<SettingsPanel />);
+    fireEvent.click(view.getByRole("button", { name: "Agents" }));
+    return view;
+  }
+
+  it("names the variable a secret comes from and prints no value for it", () => {
+    // The row used to print `k=v` for every entry in `env`, which is where an
+    // adopted alias put a live API key. The name is the whole content now: there
+    // is no value on this side to print, and saying where it comes from is what
+    // stops the row reading as though the variable were unset.
+    const { container } = agentsSection([keyed()]);
+
+    expect(container.textContent).toContain("ANTHROPIC_API_KEY=<from environment>");
+    expect(container.textContent).toContain("CLAUDE_CONFIG_DIR=~/.claude-work");
+    expect(container.textContent).toContain("Tervin does not store its value");
+    // A settings variable is still shown with its value; only the secret is not.
+    expect(container.textContent).not.toContain("ANTHROPIC_API_KEY=sk");
+  });
+
+  it("says the model endpoint form keeps neither the address nor the key", () => {
+    // The field is `type="password"`, and a password field implies somewhere the
+    // password is kept. There is nowhere: the endpoint is registered in the running
+    // app and no profile is written, so a restart loses it. Without this sentence the
+    // form reads as saved configuration, and the first time someone reopens Tervin to
+    // find their endpoint gone the honest reading is that Tervin lost it.
+    const { container } = agentsSection([keyed({ secrets_from_env: [] })]);
+
+    expect(container.textContent).toContain("held for this session only");
+    expect(container.textContent).toContain("entered again after a restart");
+  });
+
+  it("says nothing about the environment for profiles that name no secret", () => {
+    // Copy describing a mechanism that is not in play reads as a warning about
+    // nothing, and teaches the reader to skip the line that will matter later.
+    const { container } = agentsSection([
+      keyed({ id: "claude-personal", name: "Claude · Personal", secrets_from_env: [] }),
+    ]);
+    expect(container.textContent).toContain("CLAUDE_CONFIG_DIR=~/.claude-work");
+    expect(container.textContent).not.toContain("from environment");
+    expect(container.textContent).not.toContain("Tervin does not store its value");
   });
 });

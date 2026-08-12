@@ -30,7 +30,7 @@ import { ImageAddon } from "@xterm/addon-image";
 import "@xterm/xterm/css/xterm.css";
 
 import * as api from "../lib/api";
-import { overlayOpen, useWorkspace, type Appearance } from "../lib/store";
+import { describeError, overlayOpen, useWorkspace, type Appearance } from "../lib/store";
 import { findLinks, pasteNeedsConfirmation, type LinkMatch } from "../lib/links";
 import { chooseRenderer, markRendererAttempt } from "../lib/renderer";
 import { findTheme, toXtermTheme } from "../design/themes";
@@ -183,6 +183,26 @@ interface PasteConfirm {
   lines: number;
 }
 
+/** A path the host resolved, refused to open on its own, and wants an answer about. */
+interface OpenConfirm {
+  /** Where it points after symlinks — the only string that says where this goes. */
+  path: string;
+  reason: string;
+}
+
+/**
+ * What acting on a link may do besides opening it.
+ *
+ * Passed rather than reached for, because `activateLink` is called from the xterm link
+ * provider and from the context menu, and neither is inside the component's render.
+ */
+interface LinkActions {
+  /** Ask before opening a path the host would not open unprompted. */
+  confirm: (request: OpenConfirm) => void;
+  /** Say why nothing happened. */
+  notice: (message: string) => void;
+}
+
 export function TerminalPane({ paneId, active, onFocus }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const appearance = useWorkspace((s) => s.appearance);
@@ -202,6 +222,10 @@ export function TerminalPane({ paneId, active, onFocus }: Props) {
 
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [pasteConfirm, setPasteConfirm] = useState<PasteConfirm | null>(null);
+  const [openConfirm, setOpenConfirm] = useState<OpenConfirm | null>(null);
+  // Both members are stable for the life of the component — a `useState` setter and a
+  // store action — so the mount-only effect below can capture this object safely.
+  const linkActions: LinkActions = { confirm: setOpenConfirm, notice: pushNotice };
   /**
    * The command whose output fills the top of the viewport, when its own line has
    * scrolled out of sight.
@@ -376,7 +400,7 @@ export function TerminalPane({ paneId, active, onFocus }: Props) {
             end: { x: match.end, y: lineNumber },
           },
           text: match.text,
-          activate: () => void activateLink(match, cwd ?? "."),
+          activate: () => void activateLink(match, cwd ?? ".", linkActions),
           hover: (_e: MouseEvent, _t: string) => undefined,
           leave: () => undefined,
         }));
@@ -688,6 +712,7 @@ export function TerminalPane({ paneId, active, onFocus }: Props) {
           state={menu}
           paneId={paneId}
           cwd={cwd ?? "."}
+          actions={linkActions}
           onClose={() => setMenu(null)}
         />
       )}
@@ -702,6 +727,19 @@ export function TerminalPane({ paneId, active, onFocus }: Props) {
           }}
         />
       )}
+
+      {openConfirm && (
+        <OpenConfirmDialog
+          request={openConfirm}
+          onCancel={() => setOpenConfirm(null)}
+          onConfirm={() => {
+            // The resolved path, not the text that was clicked: it is what the dialog
+            // showed, and what the answer was about.
+            void openThroughHost(openConfirm.path, linkActions, true);
+            setOpenConfirm(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -712,11 +750,13 @@ function ContextMenu({
   state,
   paneId,
   cwd,
+  actions,
   onClose,
 }: {
   state: ContextMenuState;
   paneId: string;
   cwd: string;
+  actions: LinkActions;
   onClose: () => void;
 }) {
   const s = useWorkspace();
@@ -738,7 +778,7 @@ function ContextMenu({
   if (state.link) {
     items.unshift({
       label: state.link.hint,
-      run: () => void activateLink(state.link!, cwd),
+      run: () => void activateLink(state.link!, cwd, actions),
     });
   }
 
@@ -883,10 +923,97 @@ function PasteConfirmDialog({
   );
 }
 
+/**
+ * The prompt for a path outside the project.
+ *
+ * Shows where the path resolves to rather than the text that was clicked, because
+ * those differ exactly when the answer matters: a symlink sitting inside the project
+ * can name somewhere else entirely.
+ */
+function OpenConfirmDialog({
+  request,
+  onCancel,
+  onConfirm,
+}: {
+  request: OpenConfirm;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      className="overlay-scrim"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Confirm opening a path outside the project"
+      onClick={onCancel}
+      style={{ display: "grid", placeItems: "center", padding: "var(--sp-9)" }}
+    >
+      <div
+        className="overlay-surface col"
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: "min(560px, 96vw)", maxHeight: "70vh" }}
+      >
+        <div
+          className="row"
+          style={{
+            padding: "var(--sp-5) var(--sp-7)",
+            borderBottom: "1px solid var(--tervin-line)",
+          }}
+        >
+          <span className="dot dot-amber" />
+          <strong style={{ fontSize: "var(--text-subsection)" }}>
+            Open a path outside the project?
+          </strong>
+        </div>
+
+        <div style={{ padding: "var(--sp-7)", overflow: "auto" }}>
+          <p className="meta" style={{ margin: 0, textWrap: "pretty" }}>
+            {request.reason}
+          </p>
+          <pre
+            className="mono selectable"
+            style={{
+              margin: "var(--sp-5) 0 0",
+              padding: "var(--sp-4)",
+              background: "var(--tervin-bg)",
+              border: "1px solid var(--tervin-line)",
+              borderRadius: "var(--radius-control)",
+              fontSize: "var(--font-mono-size)",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+            }}
+          >
+            {request.path}
+          </pre>
+        </div>
+
+        <div
+          className="row"
+          style={{
+            padding: "var(--sp-5) var(--sp-7)",
+            borderTop: "1px solid var(--tervin-line)",
+          }}
+        >
+          <span className="meta grow">Opens with your default application for this file.</span>
+          {/* Focus starts on Cancel, unlike the paste prompt: this dialog exists
+              because the destination is somewhere it should not be, and a stray
+              Return must not be the thing that opens it. */}
+          <button className="btn" onClick={onCancel} autoFocus>
+            Cancel
+          </button>
+          <button className="btn btn-primary" onClick={onConfirm}>
+            Open
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------- helpers
 
 /** Act on a recognised span. */
-async function activateLink(match: LinkMatch, cwd: string): Promise<void> {
+async function activateLink(match: LinkMatch, cwd: string, actions: LinkActions): Promise<void> {
   const opener = await import("@tauri-apps/plugin-opener").catch(() => null);
 
   switch (match.kind) {
@@ -908,9 +1035,7 @@ async function activateLink(match: LinkMatch, cwd: string): Promise<void> {
       const absolute = match.path.startsWith("/")
         ? match.path
         : `${cwd.replace(/\/$/, "")}/${match.path.replace(/^\.\//, "")}`;
-      // Opened with the system handler, which respects the user's own default
-      // editor rather than Tervin picking one.
-      await opener?.openPath(absolute).catch(() => {});
+      await openThroughHost(absolute, actions);
       return;
     }
 
@@ -920,6 +1045,32 @@ async function activateLink(match: LinkMatch, cwd: string): Promise<void> {
       // project-specific — so the reference is copied rather than guessed at.
       await navigator.clipboard.writeText(match.text).catch(() => {});
       return;
+  }
+}
+
+/**
+ * Ask the host to open a path, and act on what it says.
+ *
+ * The host opens it with the system handler, which respects the user's own default
+ * editor rather than Tervin picking one — but it decides first, because it is the
+ * side that knows the project root. A path outside it comes back unopened.
+ *
+ * Nothing here is swallowed. This call used to end in `.catch(() => {})`, so a path
+ * that had been moved or deleted produced a click that did nothing at all, which from
+ * the outside is the same as an open that is merely slow.
+ */
+async function openThroughHost(
+  path: string,
+  actions: LinkActions,
+  confirmed = false,
+): Promise<void> {
+  try {
+    const outcome = await api.openPath(path, confirmed);
+    if (outcome.kind === "needs_confirmation") {
+      actions.confirm({ path: outcome.path, reason: outcome.reason });
+    }
+  } catch (e) {
+    actions.notice(describeError(e));
   }
 }
 

@@ -777,9 +777,18 @@ impl Conn {
         Ok(())
     }
 
+    // `Outgoing` is four fields — a `&'static str`, an `Option<u64>`, a `String`, and
+    // an `Option<Value>` — and none of those can fail to serialise. `to_value` reports
+    // an error only when a `Serialize` impl returns one or a map key is not a string,
+    // and a derived impl over those types does neither. The `params` a caller passes in
+    // is already a `Value`, so it has been through serde once before it arrives here.
     async fn notify(&self, method: &str, params: Value) -> Result<()> {
-        self.write(&serde_json::to_value(Outgoing::notification(method, params)).unwrap())
-            .await
+        #[allow(
+            clippy::unwrap_used,
+            reason = "`Outgoing`'s fields cannot fail to serialise"
+        )]
+        let envelope = serde_json::to_value(Outgoing::notification(method, params)).unwrap();
+        self.write(&envelope).await
     }
 
     /// Send a request and await its response. No timeout: `session/prompt` can
@@ -797,10 +806,13 @@ impl Conn {
             return Err(RuntimeError::SessionEnded);
         }
 
-        if let Err(e) = self
-            .write(&serde_json::to_value(Outgoing::request(id, method, params)).unwrap())
-            .await
-        {
+        // Same envelope, same argument as `notify` above.
+        #[allow(
+            clippy::unwrap_used,
+            reason = "`Outgoing`'s fields cannot fail to serialise"
+        )]
+        let envelope = serde_json::to_value(Outgoing::request(id, method, params)).unwrap();
+        if let Err(e) = self.write(&envelope).await {
             self.shared.pending.lock().remove(&id);
             return Err(e);
         }

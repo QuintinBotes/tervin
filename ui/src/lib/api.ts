@@ -267,6 +267,13 @@ export interface AgentProfile {
   binary: string;
   args: string[];
   env: Record<string, string>;
+  /**
+   * Names of variables read from the environment Tervin was launched in.
+   *
+   * Names only — the values are never sent here and never written to `agents.toml`.
+   * Absent on a profile that names none, which is why every read of it is guarded.
+   */
+  secrets_from_env?: string[];
   model?: string | null;
   permission_mode?: string | null;
   badge?: string | null;
@@ -1004,6 +1011,28 @@ export const scrollbackRetain = (paneKeys: string[]) =>
 
 export const setProjectRoot = (path: string) =>
   invoke<string>("set_project_root", { path });
+
+/**
+ * What the host did with a path it was asked to open.
+ *
+ * A path outside the project is a question rather than a failure, so it comes back as
+ * a value. `path` is always where the request *resolved* to after symlinks — which is
+ * what a prompt has to show, since a link inside the project can name anywhere.
+ */
+export type OpenOutcome =
+  | { kind: "opened"; path: string }
+  | { kind: "needs_confirmation"; path: string; reason: string };
+
+/**
+ * Open a path with the user's own default application for that file type.
+ *
+ * Not `@tauri-apps/plugin-opener`: the webview's grant for that was `**`, every file
+ * on disk, because a capability scope is static JSON and the project root is chosen
+ * at runtime. The host decides instead, where the root is known, and `confirmed`
+ * carries the user's answer back when it asked.
+ */
+export const openPath = (path: string, confirmed = false) =>
+  invoke<OpenOutcome>("open_path", { path, confirmed });
 
 // ------------------------------------------------------------ connections
 

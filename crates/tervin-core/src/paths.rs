@@ -66,6 +66,37 @@ pub fn create_private_dir(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Write a file only its owner can read.
+///
+/// For the files that name credentials or invite the user to add them: `agents.toml`
+/// says which account an agent runs as, and `mcp.json` carries an `env` block per
+/// server, which is where a server's API token ends up. The mode is set explicitly
+/// rather than left to the process umask, which on a default macOS or Linux install
+/// leaves a new file readable by every other account on the machine.
+pub fn write_private(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        // `mode` applies only when this call creates the file, so a new file is never
+        // briefly wider than 0o600. `set_permissions` afterwards is what narrows a
+        // file that already exists — including one written before this function did.
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(contents.as_ref())?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, contents)
+    }
+}
+
 /// Shorten a path for display by replacing the home prefix with `~`.
 ///
 /// Display-only. Never use the result to open anything.
@@ -79,4 +110,61 @@ pub fn abbreviate(path: &Path) -> String {
         }
     }
     path.display().to_string()
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn scratch() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tervin-paths-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("could not create a scratch directory");
+        dir
+    }
+
+    fn mode_of(path: &Path) -> u32 {
+        std::fs::metadata(path)
+            .expect("the file should exist")
+            .permissions()
+            .mode()
+    }
+
+    #[test]
+    fn a_private_write_is_unreadable_by_other_accounts() {
+        let dir = scratch();
+        let path = dir.join("agents.toml");
+        write_private(&path, "contents").expect("write failed");
+        assert_eq!(
+            mode_of(&path) & 0o077,
+            0,
+            "group and other must have no access at all"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read failed"),
+            "contents",
+            "narrowing the mode must not cost the contents"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_private_write_narrows_a_file_that_already_existed() {
+        // The upgrade case, and the reason `set_permissions` runs even when the file
+        // was opened with a mode: an `agents.toml` written by an earlier Tervin is
+        // already on disk at whatever the umask gave it.
+        let dir = scratch();
+        let path = dir.join("agents.toml");
+        std::fs::write(&path, "old").expect("write failed");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("chmod failed");
+
+        write_private(&path, "new").expect("write failed");
+        assert_eq!(
+            mode_of(&path) & 0o077,
+            0,
+            "a world-readable file must not stay that way"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

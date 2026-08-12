@@ -134,9 +134,16 @@ impl PaneAgents {
             sessions.insert(activity.session_id.clone(), session);
         }
 
+        // Either the key was already present, or the branch above inserted it under
+        // this same id. `sessions` is held under one lock guard across both, so no
+        // other observer can remove it in between.
+        #[allow(
+            clippy::expect_used,
+            reason = "known or inserted above, under one lock"
+        )]
         let session = sessions
             .get_mut(&activity.session_id)
-            .expect("just inserted");
+            .expect("known or just inserted");
         // A session can move: `claude` resumed in a different pane keeps its id.
         session.pane_id = pane_id.clone();
 

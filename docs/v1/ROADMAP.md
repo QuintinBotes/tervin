@@ -122,19 +122,25 @@ Nocturne is ignored, apart from its Phosphor icon choice, which Paper Chrome als
 
 Best practice, applied. These govern specs 00, 18 and 13.
 
-**Secrets.** Three-part split, because the current position is not what the docs claim:
+**Secrets.** Corrected once against the code — see spec 00.4 for the full account.
 
-- Tervin **already stores a secret in plaintext**. `SettingsPanel.tsx:707` collects a
-  model-endpoint API key with `type="password"`, and `profile.rs:204-219` writes it to
-  `agents.toml` via `toml::to_string_pretty`, at whatever the umask gives.
-- **Fix:** anything the user hands Tervin goes to the macOS Keychain, with only a
-  reference on disk. Config files carrying user input get `0600` set explicitly, the same
-  reasoning `paths.rs:61` already applies to `runtime_dir()`.
+- Tervin **already stores a secret in plaintext**, but not where this document first said.
+  The path is `parse_alias_line` (`profile.rs:437-450`), which copies leading `VAR=value`
+  pairs out of a discovered shell alias into `AgentProfile.env`, serialised with no mode
+  set and rendered verbatim in Settings. The endpoint API key is *not* persisted at all.
+- **The Keychain is the wrong fix here, and this was the roadmap's own mistake.** Keychain
+  item ACLs bind to the code signature; Tervin ships unsigned by decision
+  (`COMPETITIVE-SPEC.md` §5), and an ad-hoc signature changes every rebuild — so a stored
+  item either re-prompts forever or becomes unreadable. That is worse than the plaintext
+  file it replaces.
+- **Fix:** store the variable's *name* and read its value from the environment at launch.
+  Config files carrying user input get `0600` set explicitly, the reasoning `paths.rs:63`
+  already applies to `runtime_dir()`.
 - **SSH passphrases stay refused.** `ssh-agent` with `--apple-use-keychain` owns that
   natively; duplicating it makes Tervin a new target for no gain. The mockup's row
   overreaches — correct the row, don't build to it.
 - **No vault surface.** Tervin does not become a credential manager. `SECURITY.md` §5
-  holds; this strengthens it rather than rewriting it.
+  holds unchanged.
 
 **Capability surface.** The `**` opener glob goes. Every Tauri capability entry is
 justified or removed. `connect-src` gets a test, not a reading — it is what mechanically
