@@ -107,6 +107,53 @@ Three targets: `osc_scan` (terminal-core), `fuzzy_match` (file-index), `classify
 (rules-engine). Numbers and the budgets they are measured against are in
 [PERFORMANCE.md](PERFORMANCE.md). Expect a few minutes.
 
+### Local desktop end-to-end tests
+
+These drive the real window: a real Tervin process, a real WKWebView, real clicks and
+keystrokes. They are slower than everything above — budget one to three minutes per
+spec — so they are not part of the suite in §2 and have to be asked for.
+
+**Prerequisites.** macOS, the Rust toolchain, and `pnpm install`. Nothing else: macOS
+has no WKWebView driver, so `tauri-driver` cannot work here, and the suite instead uses
+`@wdio/tauri-service` with its *embedded* provider — `tauri-plugin-wdio-webdriver`
+compiled into the binary, serving WebDriver from inside the app. No driver to install.
+
+```sh
+pnpm test:e2e                                            # every spec
+pnpm test:e2e:spec -- tests/e2e/settings-font.e2e.ts     # one spec
+pnpm test:e2e:debug                                      # verbose WebDriver logging
+```
+
+Each of these builds first: `pnpm e2e:build` compiles the UI and then the binary with
+`--features e2e`. That feature is the whole security story — it is what pulls in the
+WebDriver server *and* sets `tauri/custom-protocol`. A release build never enables it,
+so a shipped Tervin carries no socket that can script the window. Confirm that for
+yourself:
+
+```sh
+cargo tree -p tervin-app -e normal | grep wdio        # nothing
+cargo tree -p tervin-app -e normal --features e2e | grep wdio
+```
+
+The app under test runs against a throwaway `HOME` created per run, so a test writes
+its own `workspace.sqlite3` and never touches your real profile. The path is printed at
+the start of the run.
+
+**Failure artefacts** land under `artifacts/e2e/`, which is git-ignored whole:
+`screenshots/` gets a PNG named for the failing test, `logs/` gets the WebDriver command
+log and the app's own stdout. The screenshot is usually the fastest way to tell a broken
+app from a broken assertion.
+
+**Adding selectors.** E2E finds controls by `data-testid`, lowercase kebab case, named
+for intent rather than markup — `save-settings-button`, not `btn-primary-2`. Add one to
+the control in `ui/src` when a scenario needs it, and only then; they are not decoration.
+Never select by CSS class, visible text, or position, and never click coordinates.
+
+**Debugging a report.** In Claude Code, `/debug-tauri <symptom>` runs the loop
+deliberately: classify the layer, reproduce with the narrowest spec, read the screenshot
+and logs, state a root cause before editing, fix, rerun, and keep the scenario as a
+regression test. See `.claude/skills/debug-tauri/SKILL.md`.
+
 ---
 
 ## 3. Running it, which is the part that matters

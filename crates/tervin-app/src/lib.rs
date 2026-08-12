@@ -74,7 +74,16 @@ pub fn run() -> anyhow::Result<()> {
         state.notice(format!("Could not write shell integration scripts: {e}"));
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // E2E only. The plugin opens a WebDriver HTTP server on TAURI_WEBDRIVER_PORT
+    // that can click, type, and read the window, so it is gated on a feature that
+    // is off by default rather than on `debug_assertions` — a developer running
+    // `tauri dev` gets no automation socket either, only `pnpm e2e:build` does.
+    #[cfg(feature = "e2e")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Arc::clone(&state))

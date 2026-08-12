@@ -39,6 +39,7 @@ export function SettingsPanel() {
       role="dialog"
       aria-modal="true"
       aria-label="Settings"
+      data-testid="settings-dialog"
       tabIndex={-1}
       onClick={() => s.setSettings(false)}
       style={{
@@ -78,6 +79,7 @@ export function SettingsPanel() {
             <button
               key={id}
               className="btn btn-ghost"
+              data-testid={`settings-nav-${id}`}
               onClick={() => setSection(id)}
               style={{
                 justifyContent: "flex-start",
@@ -89,7 +91,11 @@ export function SettingsPanel() {
             </button>
           ))}
           <div className="grow" />
-          <button className="btn" onClick={() => s.setSettings(false)}>
+          <button
+            className="btn"
+            data-testid="settings-close-button"
+            onClick={() => s.setSettings(false)}
+          >
             Close
           </button>
         </nav>
@@ -161,6 +167,7 @@ function AppearanceSection() {
       >
         <input
           value={a.fontFamily}
+          data-testid="terminal-font-input"
           onChange={(e) => s.setAppearance({ fontFamily: e.target.value })}
           style={{ width: "100%" }}
           spellCheck={false}
@@ -188,6 +195,7 @@ function AppearanceSection() {
         </div>
         <div
           className="mono"
+          data-testid="terminal-font-preview"
           style={{
             marginTop: "var(--sp-2)",
             padding: "var(--sp-2)",
