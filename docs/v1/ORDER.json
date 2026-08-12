@@ -1,0 +1,117 @@
+[
+  {
+    "n": 1,
+    "file": "00-hardening-audit.md",
+    "name": "hardening-audit"
+  },
+  {
+    "n": 2,
+    "file": "22-token-baseline.md",
+    "name": "token-baseline"
+  },
+  {
+    "n": 3,
+    "file": "01-terminal-hygiene.md",
+    "name": "terminal-hygiene"
+  },
+  {
+    "n": 4,
+    "file": "14-terminal-baseline.md",
+    "name": "terminal-baseline"
+  },
+  {
+    "n": 5,
+    "file": "02-keybindings.md",
+    "name": "keybindings"
+  },
+  {
+    "n": 6,
+    "file": "03-completion.md",
+    "name": "completion"
+  },
+  {
+    "n": 7,
+    "file": "04-blocks-remote.md",
+    "name": "blocks-remote"
+  },
+  {
+    "n": 8,
+    "file": "05-profiles-appearance.md",
+    "name": "profiles-appearance"
+  },
+  {
+    "n": 9,
+    "file": "08-input-parity.md",
+    "name": "input-parity"
+  },
+  {
+    "n": 10,
+    "file": "15-ia-rail-inspector.md",
+    "name": "ia-rail-inspector"
+  },
+  {
+    "n": 11,
+    "file": "16-tasks-and-deck.md",
+    "name": "tasks-and-deck"
+  },
+  {
+    "n": 12,
+    "file": "06-workflows.md",
+    "name": "workflows"
+  },
+  {
+    "n": 13,
+    "file": "07-triggers.md",
+    "name": "triggers"
+  },
+  {
+    "n": 14,
+    "file": "17-universal-search.md",
+    "name": "universal-search"
+  },
+  {
+    "n": 15,
+    "file": "11-agent-ux.md",
+    "name": "agent-ux"
+  },
+  {
+    "n": 16,
+    "file": "09-daemon.md",
+    "name": "daemon"
+  },
+  {
+    "n": 17,
+    "file": "18-macos-integration.md",
+    "name": "macos-integration"
+  },
+  {
+    "n": 18,
+    "file": "19-onboarding-disclosure.md",
+    "name": "onboarding-disclosure"
+  },
+  {
+    "n": 19,
+    "file": "10-linux.md",
+    "name": "linux"
+  },
+  {
+    "n": 20,
+    "file": "20-design-pass.md",
+    "name": "design-pass"
+  },
+  {
+    "n": 21,
+    "file": "21-new-surfaces.md",
+    "name": "new-surfaces"
+  },
+  {
+    "n": 22,
+    "file": "12-docs-truth.md",
+    "name": "docs-truth"
+  },
+  {
+    "n": 23,
+    "file": "13-security-sweep.md",
+    "name": "security-sweep"
+  }
+]

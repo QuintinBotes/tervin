@@ -812,6 +812,11 @@ impl Normalizer {
             // what it cost, so the Thread visibly becomes its parent's again rather
             // than leaving a subagent that appears to still be running.
             if self.subagent.as_ref().is_some_and(|s| s.tool_use_id == id) {
+                // `is_some_and` on the line above is the check, and `&mut self` means
+                // nothing else can clear the field between the two lines. Taking it is
+                // the point: the run is moved out so a second `Task` completion for the
+                // same id cannot report the subagent finishing twice.
+                #[allow(clippy::expect_used, reason = "the `is_some_and` guard is one line up")]
                 let run = self.subagent.take().expect("checked just above");
                 out.push(self.event(
                     format!(

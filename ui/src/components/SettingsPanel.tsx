@@ -39,6 +39,7 @@ export function SettingsPanel() {
       role="dialog"
       aria-modal="true"
       aria-label="Settings"
+      data-testid="settings-dialog"
       tabIndex={-1}
       onClick={() => s.setSettings(false)}
       style={{
@@ -78,6 +79,7 @@ export function SettingsPanel() {
             <button
               key={id}
               className="btn btn-ghost"
+              data-testid={`settings-nav-${id}`}
               onClick={() => setSection(id)}
               style={{
                 justifyContent: "flex-start",
@@ -89,7 +91,11 @@ export function SettingsPanel() {
             </button>
           ))}
           <div className="grow" />
-          <button className="btn" onClick={() => s.setSettings(false)}>
+          <button
+            className="btn"
+            data-testid="settings-close-button"
+            onClick={() => s.setSettings(false)}
+          >
             Close
           </button>
         </nav>
@@ -161,6 +167,7 @@ function AppearanceSection() {
       >
         <input
           value={a.fontFamily}
+          data-testid="terminal-font-input"
           onChange={(e) => s.setAppearance({ fontFamily: e.target.value })}
           style={{ width: "100%" }}
           spellCheck={false}
@@ -188,6 +195,7 @@ function AppearanceSection() {
         </div>
         <div
           className="mono"
+          data-testid="terminal-font-preview"
           style={{
             marginTop: "var(--sp-2)",
             padding: "var(--sp-2)",
@@ -552,13 +560,24 @@ function AgentsSection() {
             />
             <span style={{ width: 150 }}>{p.name}</span>
             <code className="mono meta truncate grow">
-              {Object.entries(p.env)
-                .map(([k, v]) => `${k}=${v}`)
-                .join(" ") || p.binary}
+              {[
+                ...Object.entries(p.env).map(([k, v]) => `${k}=${v}`),
+                // Named, never valued. There is no value to print: it is read from
+                // the environment at launch and is not written to agents.toml.
+                ...(p.secrets_from_env ?? []).map((k) => `${k}=<from environment>`),
+              ].join(" ") || p.binary}
             </code>
             {p.sensitive && <span className="chip tone-amber">shared account</span>}
           </div>
         ))}
+        {(agents?.profiles ?? []).some((p) => (p.secrets_from_env ?? []).length > 0) && (
+          <div className="meta" style={{ marginTop: "var(--sp-2)" }}>
+            A variable shown as <code className="mono">&lt;from environment&gt;</code> is read
+            from the environment Tervin was launched in, each time a Thread starts. Tervin does
+            not store its value. If it is not set there, the Thread does not start and says
+            which variable is missing.
+          </div>
+        )}
         <div className="meta" style={{ marginTop: "var(--sp-2)" }}>
           {/* The real path, from the backend: it differs by platform, and naming the
               wrong one sends the user looking somewhere that does not exist. */}
@@ -714,6 +733,15 @@ function AddLocalModel() {
         <button className="btn btn-primary" disabled={!canAdd} onClick={() => void add()}>
           {busy ? "Checking…" : "Add"}
         </button>
+      </div>
+      {/* A password field implies somewhere to keep the password. There is nowhere:
+          `agents_add_local_model` registers the endpoint in the running app and
+          creates no profile, so nothing here survives a restart. Saying so is the
+          honest half of a decision made on purpose — storing it would mean writing a
+          credential to disk, which is the thing agents.toml stopped doing. */}
+      <div className="meta" style={{ marginTop: "var(--sp-2)", textWrap: "pretty" }}>
+        The address and key are held for this session only. Tervin writes neither to
+        disk, so both have to be entered again after a restart.
       </div>
       {result && (
         <div className="meta" style={{ marginTop: "var(--sp-2)", textWrap: "pretty" }}>

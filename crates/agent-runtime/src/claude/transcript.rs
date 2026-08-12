@@ -241,7 +241,10 @@ enum Content {
     Blocks(Vec<Block>),
     /// A shape this build does not model. The value is not read — the variant exists
     /// only so serde has somewhere to land instead of failing the whole line.
-    Unknown(#[allow(dead_code)] serde_json::Value),
+    Unknown(
+        #[allow(dead_code, reason = "kept so the raw shape survives, not to be read")]
+        serde_json::Value,
+    ),
     #[default]
     Absent,
 }

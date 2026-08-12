@@ -77,10 +77,19 @@ pub fn strip_ansi(input: &str) -> String {
     String::from_utf8_lossy(&out).to_string()
 }
 
+// Every pattern below is a literal, so `Regex::new` cannot fail on anything a user
+// can type; the only way to reach one of these `unwrap`s is to mistype one of these
+// strings. It is still worth stating, because a `LazyLock` runs its initialiser at
+// first *use* rather than at startup: a bad pattern would surface on whichever thread
+// happened to parse a Block's output, and `panic = "abort"` would take the window with
+// it. `every_output_pattern_compiles` forces all of them, so the claim is observed
+// rather than asserted.
+#[allow(clippy::unwrap_used, reason = "literal pattern; see the note above")]
 static RE_URL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"https?://[^\s"'<>)\]}\\]+"#).unwrap());
 
 /// `path:line[:col]` — the form most toolchains and editors agree on.
+#[allow(clippy::unwrap_used, reason = "literal pattern; see the note above")]
 static RE_PATH_LOC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?P<path>(?:[A-Za-z]:)?[~.]?[\w./\-+@]*[\w\-+]\.[A-Za-z][\w]*):(?P<line>\d{1,7})(?::(?P<col>\d{1,7}))?")
         .unwrap()
@@ -88,57 +97,68 @@ static RE_PATH_LOC: LazyLock<Regex> = LazyLock::new(|| {
 
 /// A bare path with a directory separator, anchored so prose is not mistaken for
 /// a filename.
+#[allow(clippy::unwrap_used, reason = "literal pattern; see the note above")]
 static RE_BARE_PATH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?:^|[\s'"(\[])(?P<path>(?:\./|\.\./|/|~/)[\w./\-+@]*[\w\-+/])"#).unwrap()
 });
 
+#[allow(clippy::unwrap_used, reason = "literal pattern; see the note above")]
 static RE_HOST_PORT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|::1):(?P<port>\d{2,5})").unwrap()
 });
 
+#[allow(clippy::unwrap_used, reason = "literal pattern; see the note above")]
 static RE_PORT_WORD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\bport\s+:?(?P<port>\d{2,5})\b").unwrap());
 
 /// rustc / cargo: `error[E0433]: message` and `warning: message`.
+#[allow(clippy::unwrap_used, reason = "literal pattern; see the note above")]
 static RE_RUSTC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^(?P<sev>error|warning)(?:\[(?P<code>E\d+)\])?(?:\([^)]*\))?: (?P<msg>.+)$")
         .unwrap()
 });
 
 /// rustc's location line: `  --> src/main.rs:10:5`.
+#[allow(clippy::unwrap_used, reason = "literal pattern; see the note above")]
 static RE_RUSTC_LOC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^\s*-->\s*(?P<path>[^\s:]+):(?P<line>\d+):(?P<col>\d+)").unwrap()
 });
 
 /// TypeScript: `src/a.ts(12,3): error TS2304: message`.
+#[allow(clippy::unwrap_used, reason = "literal pattern; see the note above")]
 static RE_TSC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^(?P<path>[^\s(]+)\((?P<line>\d+),(?P<col>\d+)\):\s*(?P<sev>error|warning)\s+(?P<code>TS\d+):\s*(?P<msg>.+)$")
         .unwrap()
 });
 
 /// clang / gcc / eslint: `path:line:col: error: message`.
+#[allow(clippy::unwrap_used, reason = "literal pattern; see the note above")]
 static RE_GCC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^\s*(?P<path>[^\s:]+):(?P<line>\d+):(?P<col>\d+):\s*(?P<sev>error|warning|note):\s*(?P<msg>.+)$")
         .unwrap()
 });
 
 /// Python tracebacks.
+#[allow(clippy::unwrap_used, reason = "literal pattern; see the note above")]
 static RE_PY_TRACE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?m)^\s*File "(?P<path>[^"]+)", line (?P<line>\d+)"#).unwrap());
 
 /// `test result: ok. 17 passed; 0 failed; 0 ignored` (cargo).
+#[allow(clippy::unwrap_used, reason = "literal pattern; see the note above")]
 static RE_CARGO_TESTS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"test result:\s*(?P<outcome>\w+)\.\s*(?P<passed>\d+) passed;\s*(?P<failed>\d+) failed;\s*(?P<ignored>\d+) ignored")
         .unwrap()
 });
 
 /// `Tests:  1 failed, 2 passed, 3 total` (jest / vitest).
+#[allow(clippy::unwrap_used, reason = "literal pattern; see the note above")]
 static RE_JEST_TESTS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)tests:\s*(?:(?P<failed>\d+) failed,\s*)?(?:(?P<skipped>\d+) skipped,\s*)?(?P<passed>\d+) passed")
         .unwrap()
 });
 
 /// `=== 3 passed, 1 failed in 0.42s ===` (pytest).
+#[allow(clippy::unwrap_used, reason = "literal pattern; see the note above")]
 static RE_PYTEST: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?P<passed>\d+) passed(?:,\s*(?P<failed>\d+) failed)?(?:,\s*(?P<skipped>\d+) skipped)?",
@@ -267,6 +287,13 @@ pub fn extract(raw_output: &str, cwd: &str) -> ParsedOutput {
         .collect();
 
     for caps in RE_RUSTC.captures_iter(scan) {
+        // Group 0 is the whole match, and `captures_iter` only yields a `Captures`
+        // when the pattern matched, so group 0 always participated. A named group
+        // could be absent; this one cannot.
+        #[allow(
+            clippy::unwrap_used,
+            reason = "group 0 is the match that produced `caps`"
+        )]
         let whole = caps.get(0).unwrap();
         let severity = severity_from(&caps["sev"]);
         let loc = rustc_locs.iter().find(|(pos, ..)| *pos > whole.start());
@@ -543,6 +570,51 @@ mod tests {
             .any(|h| h.path.contains("definitely-missing") && !h.exists));
 
         std::fs::remove_file(&file).ok();
+    }
+
+    #[test]
+    fn every_output_pattern_compiles() {
+        // Each pattern is built by a `LazyLock`, which runs at first use rather than
+        // at startup, so a mistyped literal would not show up until some thread parsed
+        // output that reached it — and under `panic = "abort"` that ends the process,
+        // not the parse. Forcing every one here is what turns "these cannot fail" from
+        // an assertion into an observation. `is_match` is called so the pattern is
+        // actually executed, not merely constructed.
+        let patterns = [
+            ("RE_URL", &RE_URL),
+            ("RE_PATH_LOC", &RE_PATH_LOC),
+            ("RE_BARE_PATH", &RE_BARE_PATH),
+            ("RE_HOST_PORT", &RE_HOST_PORT),
+            ("RE_PORT_WORD", &RE_PORT_WORD),
+            ("RE_RUSTC", &RE_RUSTC),
+            ("RE_RUSTC_LOC", &RE_RUSTC_LOC),
+            ("RE_TSC", &RE_TSC),
+            ("RE_GCC", &RE_GCC),
+            ("RE_PY_TRACE", &RE_PY_TRACE),
+            ("RE_CARGO_TESTS", &RE_CARGO_TESTS),
+            ("RE_JEST_TESTS", &RE_JEST_TESTS),
+            ("RE_PYTEST", &RE_PYTEST),
+        ];
+        for (name, re) in patterns {
+            let _ = re.is_match("probe");
+            assert!(
+                !re.as_str().is_empty(),
+                "{name} compiled to an empty pattern"
+            );
+        }
+
+        // A pattern added to the module and not to the list above would leave an
+        // `unwrap` that nothing forces, which is the failure this test exists to stop.
+        let declared = include_str!("parse.rs")
+            .lines()
+            .filter(|l| l.starts_with("static RE_"))
+            .count();
+        assert_eq!(
+            declared,
+            patterns.len(),
+            "the module declares {declared} patterns but only {} are forced here",
+            patterns.len()
+        );
     }
 
     #[test]

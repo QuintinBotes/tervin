@@ -215,7 +215,10 @@ fn score_with(m: &mut Matcher, query: &str, candidate: &str) -> Option<Match> {
     // Indexed rather than iterated: the body reads `q[i]` while writing `best`,
     // `run`, and `from` at `i * n + j`, so the index is the subject of the loop.
     // Iterators would need three parallel zips and would obscure the recurrence.
-    #[allow(clippy::needless_range_loop)]
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "stated directly above: the index, not the element, is the subject"
+    )]
     for i in 0..m {
         for j in 0..n {
             if !chars_eq(q[i], cand[j], case_sensitive) {

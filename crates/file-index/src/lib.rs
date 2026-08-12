@@ -19,6 +19,24 @@
 //! snapshot; a rebuild replaces it atomically. Nothing that runs per keystroke
 //! ever touches the filesystem.
 
+// `panic = "abort"` in the release profile means a panic on any thread ends the
+// whole window, so a production panic costs the session rather than one feature.
+// Each one that remains carries an `#[allow]` whose `reason` is the argument for
+// why it cannot fire; a new one has to make that argument or fail the build. What
+// this list covers, and the one route it cannot, is written down in tervin-app's
+// `tests/production_panics.rs`.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::allow_attributes_without_reason
+    )
+)]
+
 pub mod fuzzy;
 
 pub use fuzzy::{rank, score, Match};
@@ -282,7 +300,28 @@ fn protects(root: &Path, path: &Path) -> bool {
     !root.starts_with(path)
 }
 
+/// Whether a directory holds anything at all.
+///
+/// Only ever called on a directory sitting at the depth cap, to tell one whose
+/// contents were left unwalked from one that is simply empty.
+fn has_any_child(path: &Path) -> bool {
+    std::fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_some())
+}
+
 fn walk(root: &Path) -> Snapshot {
+    walk_bounded(root, MAX_ENTRIES, MAX_DEPTH)
+}
+
+/// The walk, with its two size bounds as arguments.
+///
+/// `walk` is the only caller outside tests, and it passes the real constants. The
+/// bounds are parameters so a test can actually reach the truncation path: proving
+/// a 200,000-entry cap by creating 200,001 real files costs far more than the proof
+/// is worth, and a bound no test ever reaches is a bound a refactor can quietly
+/// drop. `WALK_BUDGET` is deliberately not a parameter — reaching it needs a slow
+/// filesystem rather than a small number, which is a different kind of test and one
+/// this suite does not have.
+fn walk_bounded(root: &Path, max_entries: usize, max_depth: usize) -> Snapshot {
     let started = Instant::now();
     let mut entries: Vec<Entry> = Vec::new();
     let mut truncated = false;
@@ -297,7 +336,7 @@ fn walk(root: &Path) -> Snapshot {
     }
 
     let walker = ignore::WalkBuilder::new(root)
-        .max_depth(Some(MAX_DEPTH))
+        .max_depth(Some(max_depth))
         // Every ignore mechanism a developer expects to work.
         .hidden(true)
         .git_ignore(true)
@@ -336,7 +375,11 @@ fn walk(root: &Path) -> Snapshot {
         .build();
 
     for result in walker {
-        if entries.len() >= MAX_ENTRIES {
+        // Checked before the entry is taken, not after the walk: the cap exists to
+        // bound what this loop holds in memory, so a version that collected the
+        // whole tree and trimmed it afterwards would produce the same snapshot
+        // while defeating the point.
+        if entries.len() >= max_entries {
             truncated = true;
             break;
         }
@@ -363,6 +406,20 @@ fn walk(root: &Path) -> Snapshot {
         }
 
         let is_dir = entry.file_type().is_some_and(|t| t.is_dir());
+
+        // A directory sitting at the depth cap was yielded but never read into, so
+        // everything below it is missing. `truncated` is what stops the UI showing a
+        // partial index as the whole project, so it has to cover the depth bound and
+        // not only the entry count — otherwise a deep tree comes back short and
+        // claims to be complete, which is the silent version of the same defect.
+        //
+        // The extra `read_dir` happens only at the boundary, which in production is
+        // depth 24. It errs towards claiming truncation: a directory down there whose
+        // children are all ignored would report partial results that are in fact
+        // complete. The opposite error is the one that cannot be noticed.
+        if is_dir && entry.depth() >= max_depth && has_any_child(entry.path()) {
+            truncated = true;
+        }
 
         // Lossy is acceptable: a path that is not valid UTF-8 cannot be typed into
         // a completion box anyway, and dropping it silently would be worse than
@@ -649,18 +706,153 @@ mod tests {
 
     #[test]
     fn does_not_follow_symlinks_out_of_the_tree() {
-        // A link back up the tree would make the walk unbounded whatever the depth
-        // cap says.
+        // Two links, because they fail in different ways and only one of them is
+        // caught by anything other than `follow_links(false)`.
+        //
+        // `loop` points at the walk root, so following it is a cycle and the walk
+        // would never end on the depth cap alone. `escape` points sideways at a
+        // directory that is not part of the project at all: following that one
+        // terminates perfectly happily and quietly indexes somebody else's files
+        // under a project-relative path, which is the failure the name of this test
+        // is about.
         let dir = project();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("private.txt"), b"x").unwrap();
         #[cfg(unix)]
-        std::os::unix::fs::symlink(dir.path(), dir.path().join("loop")).ok();
+        {
+            std::os::unix::fs::symlink(dir.path(), dir.path().join("loop")).ok();
+            std::os::unix::fs::symlink(outside.path(), dir.path().join("escape")).ok();
+        }
 
         let index = FileIndex::new();
         let snapshot = index.rebuild(dir.path());
-        assert!(!snapshot
+
+        // Reaching this line means the walk terminated. Each link is itself indexed,
+        // as an ordinary non-directory entry — that is what an unfollowed symlink
+        // looks like — and nothing may appear beneath either one.
+        let through: Vec<&String> = snapshot
             .entries
             .iter()
-            .any(|e| e.path.matches("loop").count() > 1));
+            .map(|e| &e.path)
+            .filter(|p| p.starts_with("loop/") || p.starts_with("escape/"))
+            .collect();
+        assert!(
+            through.is_empty(),
+            "the walk went through a symlink: {through:?}"
+        );
+        assert!(
+            !snapshot.entries.iter().any(|e| e.path.contains("private")),
+            "a file from outside the project was indexed"
+        );
+        // And the project itself is still indexed, so the assertions above are about
+        // the links rather than about an empty snapshot.
+        assert!(snapshot.entries.iter().any(|e| e.path == "src/main.rs"));
+    }
+
+    // ------------------------------------------------------------ the bounds
+
+    /// A flat tree of exactly `files` entries, so a count is a fact rather than an
+    /// estimate. No `.gitignore` and no hidden names, because the point here is the
+    /// bound and not the ignore rules.
+    fn flat_tree(files: usize) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..files {
+            std::fs::write(dir.path().join(format!("f{i:03}.rs")), b"x").unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn a_walk_of_a_tree_larger_than_the_cap_holds_exactly_the_cap_and_says_so() {
+        // The cap here is injected, not `MAX_ENTRIES`: 200,001 real files would cost
+        // seconds of suite time to prove a `>=`. The numbers below are a test's
+        // bounds and say nothing about the product's.
+        //
+        // What this catches is a cap that stopped bounding the snapshot — dropped,
+        // inverted, or moved somewhere it no longer applies. What it cannot catch is
+        // a cap applied *after* the whole tree was collected: the entry list and the
+        // flag come out identical either way, and only the memory the walk held while
+        // it ran differs. That is why the check sits where it does, with a comment
+        // saying so; a reviewer moving it should know this test would still pass.
+        const CAP: usize = 8;
+        const FILES: usize = 25;
+
+        let dir = flat_tree(FILES);
+        let capped = walk_bounded(dir.path(), CAP, MAX_DEPTH);
+
+        assert_eq!(
+            capped.entries.len(),
+            CAP,
+            "a cap of {CAP} returned {} entries",
+            capped.entries.len()
+        );
+        assert!(
+            capped.truncated,
+            "the walk hit its cap and reported a complete index"
+        );
+
+        // And the same tree walked without a meaningful cap returns all of it, so the
+        // count above is the cap doing the work rather than a tree that was never
+        // built or an ignore rule quietly eating it.
+        let full = walk_bounded(dir.path(), MAX_ENTRIES, MAX_DEPTH);
+        assert_eq!(
+            full.entries.len(),
+            FILES,
+            "the tree itself is not what I built"
+        );
+        assert!(
+            !full.truncated,
+            "an uncapped walk of {FILES} entries truncated"
+        );
+    }
+
+    #[test]
+    fn a_tree_deeper_than_the_depth_cap_is_truncated_not_followed() {
+        // `follow_links(false)` is what makes the symlink-cycle argument hold, and
+        // this is the bound it defers to. A depth cap that stopped applying would let
+        // any deep tree — a symlinked one included — run to whatever the entry cap is.
+        const CAP: usize = 3;
+        const LEVELS: usize = 8;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut deep = dir.path().to_path_buf();
+        for level in 1..=LEVELS {
+            deep = deep.join(format!("d{level}"));
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("bottom.rs"), b"x").unwrap();
+
+        let snapshot = walk_bounded(dir.path(), MAX_ENTRIES, CAP);
+
+        let deepest = snapshot
+            .entries
+            .iter()
+            .map(|e| e.path.split('/').count())
+            .max()
+            .unwrap_or(0);
+        assert_eq!(
+            deepest, CAP,
+            "walked to depth {deepest} under a cap of {CAP}"
+        );
+        assert!(
+            snapshot.entries.iter().any(|e| e.path == "d1/d2/d3"),
+            "the walk stopped short of its own cap"
+        );
+        assert!(
+            !snapshot
+                .entries
+                .iter()
+                .any(|e| e.path.starts_with("d1/d2/d3/")),
+            "something below the depth cap was indexed: {:?}",
+            snapshot.entries.iter().map(|e| &e.path).collect::<Vec<_>>()
+        );
+        // The tree really is deeper than the cap — it is the walk that stopped, not
+        // the filesystem that ran out.
+        assert!(deep.join("bottom.rs").exists());
+        assert!(
+            snapshot.truncated,
+            "a depth-capped walk returned an index that claims to be complete"
+        );
     }
 
     // ------------------------------------------------------------ @ parsing

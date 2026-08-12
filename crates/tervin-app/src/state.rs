@@ -149,7 +149,7 @@ impl AppState {
         // discovers because it has no visible surface.
         let mcp_path = agent_runtime::McpConfig::path();
         if !mcp_path.exists() {
-            let _ = std::fs::write(&mcp_path, agent_runtime::McpConfig::example());
+            let _ = agent_runtime::McpConfig::write_example(&mcp_path);
         }
         if let (_, Some(error)) = agent_runtime::McpConfig::load() {
             notices.push(error);

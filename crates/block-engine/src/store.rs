@@ -265,13 +265,29 @@ impl Store {
         // (table, column, definition)
         const ADDED: &[(&str, &str, &str)] = &[("threads", "resume_id", "TEXT")];
 
+        // Both statements in this loop are built with `format!`, and the only thing
+        // that makes them safe is `ADDED` being string literals in this file. A name
+        // that arrived at runtime could not be rescued by binding it: `ALTER TABLE ?
+        // ADD COLUMN ...` is a syntax error, because SQLite binds values and never
+        // identifiers. So a column that has to be decided at run time is not a
+        // parameter — it is a lookup against a fixed list, resolved before it reaches
+        // either string.
         for (table, column, definition) in ADDED {
+            // `{table}` is `ADDED.0`, a literal. This statement alone could bind it —
+            // `pragma_table_info(?)` does accept a parameter — but binding only here
+            // would leave the `ALTER TABLE` below taking the same name from the same
+            // constant, which is a guard that looks total and is not. The constant is
+            // the invariant; the shape of this statement is not.
             let exists: bool = conn
                 .prepare(&format!("SELECT * FROM pragma_table_info('{table}')"))?
                 .query_map([], |r| r.get::<_, String>("name"))?
                 .filter_map(std::result::Result::ok)
                 .any(|name| name == *column);
             if !exists {
+                // All three come from `ADDED`. `definition` is SQL rather than a value
+                // — `TEXT`, `INTEGER NOT NULL DEFAULT 0` — so this line cannot be
+                // parameterised even in principle, and a `definition` that came from
+                // outside this file would be a statement written by whoever supplied it.
                 conn.execute_batch(&format!(
                     "ALTER TABLE {table} ADD COLUMN {column} {definition};"
                 ))?;
@@ -495,6 +511,14 @@ impl Store {
 
         // Slice the preview in SQL so a 256 KB blob never crosses into Rust for a
         // row the user is only scrolling past.
+        //
+        // The three interpolated pieces are all written above and none of them carries
+        // a value: `where_clause` joins the literal predicates pushed onto `wheres`,
+        // `order` is one of three arms of a match over `SortOrder`, and `PREVIEW_CHARS`
+        // is a `usize` constant. Everything the caller supplied — including the LIKE
+        // patterns and the FTS5 expression — went into `binds` and arrives as a
+        // parameter. A filter field appended to this string instead would be the one
+        // place in this file where a Block's own text could become SQL.
         let sql = format!(
             r#"
             SELECT b.id, b.pane_id, b.thread_id, b.command, b.cwd, b.host, b.project,
@@ -810,7 +834,11 @@ impl Store {
 
     /// Append an audit record. Append-only by contract: nothing updates or
     /// deletes from this table.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the arguments are the audit record's columns; a struct would only \
+                  move the same list one layer away from the SQL that consumes it"
+    )]
     pub fn append_audit(
         &self,
         thread_id: Option<&ThreadId>,
@@ -1024,6 +1052,13 @@ impl Store {
         if keep.is_empty() {
             return Ok(conn.execute("DELETE FROM pane_scrollback", [])?);
         }
+        // The only thing interpolated is a run of `?` characters, and the length of
+        // that run comes from `keep.len()` — a count, computed here, never text from
+        // the caller. Every pane key is bound below through `params_from_iter`.
+        // Inlining the keys to save the binds would look harmless, because a pane key
+        // is a short internal string; it is also stored data read back off disk, so
+        // that version of this line would let the database decide what statement runs
+        // against it.
         let placeholders = std::iter::repeat_n("?", keep.len())
             .collect::<Vec<_>>()
             .join(",");
@@ -1351,18 +1386,36 @@ fn searchable_text(payload: &tervin_core::EventPayload) -> Option<String> {
     }
 }
 
+/// Turn what somebody typed into an FTS5 `MATCH` expression.
+///
+/// Every term becomes a quoted phrase with a prefix marker, so `AND`, `NEAR(` and
+/// `foo(` typed mid-thought are matched as text instead of parsed as operators, and a
+/// term with nothing to search for is dropped rather than carried. That is about not
+/// erroring on a half-typed query, not about safety: the string this returns is bound
+/// as a parameter at both call sites, so nothing here can reach the statement.
 fn fts_query(input: &str) -> String {
     let terms: Vec<String> = input
         .split_whitespace()
-        .filter(|t| !t.is_empty())
+        // A term with nothing the tokenizer would index — `--`, `*`, `';` — becomes an
+        // empty phrase, and an empty phrase matches no row at all. Left in the `AND`
+        // chain it takes the rest of the query down with it, so `-- hello` would find
+        // nothing while `hello` found rows: a search box reporting "no matches" about a
+        // document it can see. Both indexes are declared `tokenize = 'unicode61'`, which
+        // indexes letters and numbers and treats every other character as a separator,
+        // so `is_alphanumeric` asks the same question in Rust. Where the two disagree
+        // the term survives and the query matches nothing, which is what it did before.
+        .filter(|t| t.chars().any(char::is_alphanumeric))
         .map(|t| {
+            // A quote would close the phrase early and turn the rest of the term into
+            // operators; a space cannot, and splits it into two tokens of one phrase.
             let cleaned = t.replace('"', " ");
             format!("\"{}\"*", cleaned.trim())
         })
-        .filter(|t| t != "\"\"*")
         .collect();
     if terms.is_empty() {
-        // Matches nothing rather than erroring on an empty query.
+        // Matches nothing rather than erroring on an empty query. "Nothing" and not
+        // "everything": input that is only punctuation is not a request for the whole
+        // database.
         return "\"\"".to_string();
     }
     terms.join(" AND ")
@@ -1675,6 +1728,198 @@ mod history_tests {
         store.append_event(&prompt("recent", 1), None).unwrap();
         assert_eq!(store.prune_events(30).unwrap(), 0);
         assert_eq!(store.search_prompts("recent", 10).unwrap().len(), 1);
+    }
+}
+
+/// What the search box does with input nobody meant as a query.
+///
+/// Both search paths build an FTS5 expression with [`fts_query`] and bind it as a
+/// parameter, so the question is not whether a quote can close the statement — it
+/// cannot — but whether an operator, an unbalanced quote, or something written to end
+/// the statement changes what the statement *means*, and what the user is told when it
+/// does. Driven through [`Store::query_blocks`] and [`Store::search_prompts`] against a
+/// real database on disk with real rows in it: a statement that damaged the schema
+/// would have to damage a file for the claim to be worth making.
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+    use tervin_core::{AgentIdentity, EventPayload, TervinEvent, Tier};
+
+    /// Input nobody typed as a search: FTS5 operators, unbalanced punctuation, and a
+    /// payload written to close the statement and drop the table it reads from.
+    ///
+    /// `don't` is in the list because it is the one entry somebody types on purpose,
+    /// and it is the one that tells the two mistakes apart. A sanitised expression
+    /// pasted into the statement instead of bound survives every other probe here —
+    /// `fts_query` emits double quotes and never a single one — and stops surviving
+    /// the moment an apostrophe reaches it.
+    const ADVERSARIAL: &[&str] = &[
+        "\"",
+        "--",
+        "NEAR(a b)",
+        "*",
+        "a OR b",
+        "foo(",
+        "don't stop",
+        "'; DROP TABLE blocks; --",
+        "",
+    ];
+
+    fn on_disk(dir: &tempfile::TempDir) -> Store {
+        Store::open(&dir.path().join("workspace.db")).unwrap()
+    }
+
+    fn block(command: &str, output: &str) -> Block {
+        let mut b = Block::new(PaneId::new(), SessionId::new(), command, "/proj", "local");
+        b.status = BlockStatus::Succeeded;
+        b.output.inline = output.as_bytes().to_vec();
+        b.output.total_bytes = output.len() as u64;
+        b
+    }
+
+    fn prompt(text: &str) -> TervinEvent {
+        TervinEvent::new(
+            AgentIdentity::new("claude-code", "Claude Code", Tier::Structured),
+            "asked something",
+            EventPayload::UserPrompted {
+                text: text.to_string(),
+            },
+        )
+    }
+
+    fn find_blocks(store: &Store, text: &str) -> usize {
+        store
+            .query_blocks(&BlockFilter {
+                text: Some(text.to_string()),
+                ..Default::default()
+            })
+            .unwrap()
+            .len()
+    }
+
+    /// The tables the database actually has, read back rather than assumed.
+    fn tables(store: &Store) -> Vec<String> {
+        let conn = store.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+            .unwrap();
+        stmt.query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<String>>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn an_adversarial_search_query_cannot_change_what_the_statement_means() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = on_disk(&dir);
+        let seeded = block("echo hi", "hi there");
+        store.upsert_block(&seeded).unwrap();
+        store
+            .append_event(&prompt("what does this do"), None)
+            .unwrap();
+
+        let schema = tables(&store);
+        assert!(
+            schema.contains(&"blocks".to_string()),
+            "the fixture is wrong: {schema:?}"
+        );
+
+        for probe in ADVERSARIAL {
+            let blocks = store.query_blocks(&BlockFilter {
+                text: Some((*probe).to_string()),
+                ..Default::default()
+            });
+            assert!(
+                blocks.is_ok(),
+                "searching Blocks for {probe:?} errored: {:?}",
+                blocks.err()
+            );
+
+            let prompts = store.search_prompts(probe, 10);
+            assert!(
+                prompts.is_ok(),
+                "searching prompts for {probe:?} errored: {:?}",
+                prompts.err()
+            );
+
+            // "It did not error" is the weak half. A statement that ran the payload
+            // would also return cleanly, so the schema and the rows are what say it
+            // did not: the table is still there and still holds what it held.
+            assert_eq!(
+                tables(&store),
+                schema,
+                "the schema changed while searching for {probe:?}"
+            );
+            assert!(
+                store.get_block(&seeded.id).unwrap().is_some(),
+                "the Block did not survive a search for {probe:?}"
+            );
+            assert_eq!(
+                store.search_prompts("", 10).unwrap().len(),
+                1,
+                "the prompt index did not survive a search for {probe:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_search_mixing_punctuation_with_a_word_still_finds_the_word() {
+        // `--` holds no character `unicode61` indexes, so it tokenises to an empty
+        // phrase, and an empty phrase matches no row. Joined with ` AND ` it took the
+        // rest of the query with it: `-- hello` found nothing while `hello` found the
+        // row, which is a search box saying "no matches" about a document it can see.
+        // Nobody types `--` deliberately, but `-->`, a pasted diff marker and the
+        // injection payload above all arrive with a fragment like it.
+        let dir = tempfile::tempdir().unwrap();
+        let store = on_disk(&dir);
+        store
+            .upsert_block(&block("cargo test", "hello from the fixture"))
+            .unwrap();
+        store
+            .append_event(&prompt("hello, can you look at this"), None)
+            .unwrap();
+
+        assert_eq!(find_blocks(&store, "hello"), 1, "the fixture is wrong");
+        assert_eq!(
+            find_blocks(&store, "-- hello"),
+            1,
+            "a fragment with nothing to search for swallowed the rest of the query"
+        );
+        assert_eq!(find_blocks(&store, "hello --"), 1);
+        assert_eq!(store.search_prompts("-- hello", 10).unwrap().len(), 1);
+
+        // The other half, or dropping the fragment would be a widening: input that is
+        // only punctuation is unsearchable, and unsearchable means no rows rather than
+        // every row.
+        assert_eq!(
+            find_blocks(&store, "--"),
+            0,
+            "a query with nothing to match returned rows"
+        );
+        assert_eq!(store.search_prompts("-- ;", 10).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn an_injection_payload_is_searched_for_as_text() {
+        // What the statement means, stated positively. The words in that payload are
+        // ordinary words, and someone who ran the command and is looking for it again
+        // should get the Block back — the same answer the search gives for any other
+        // text, which is the point.
+        let dir = tempfile::tempdir().unwrap();
+        let store = on_disk(&dir);
+        store
+            .upsert_block(&block(
+                "psql tervin",
+                "tervin=# DROP TABLE blocks;\nERROR:  permission denied for table blocks",
+            ))
+            .unwrap();
+
+        assert_eq!(find_blocks(&store, "'; DROP TABLE blocks; --"), 1);
+        assert!(
+            tables(&store).contains(&"blocks".to_string()),
+            "the table named in the payload is gone"
+        );
     }
 }
 

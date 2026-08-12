@@ -94,6 +94,14 @@ This is where a recent bug lived, so check it deliberately.
 - [ ] The paths shown for `agents.toml` and `mcp.json` are real and correct for
       macOS.
 - [ ] Switching profile in the composer changes which account runs.
+- [ ] With `alias claude-work='ANTHROPIC_API_KEY=sk-… claude'` in your rc file,
+      "Found on this machine" offers it and says the key will be read from your
+      environment. Adopt it: the row shows `ANTHROPIC_API_KEY=<from environment>`
+      and no value, and `agents.toml` holds the name without the key.
+- [ ] Starting a Thread on that profile, with the variable *not* exported in the
+      shell Tervin was launched from, refuses and names the variable. Export it,
+      relaunch Tervin, and the Thread starts.
+- [ ] `ls -l` on `agents.toml` and `mcp.json` shows `-rw-------`.
 
 ## 6. Threads
 
